@@ -1,0 +1,171 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage{setspace}
+\usepackage{csquotes}
+
+\title{\vspace{-2.8cm}\textsc{\large Research Proposal} \\ ActivityPub
+  compatibility
+for Bluesky}
+
+\author{Martin Sonnberger}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\onehalfspacing
+
+\section{Introduction}
+
+Mastodon and Bluesky are two popular microblogging social media
+platforms that present themselves as open, decentralized
+alternatives to traditional platforms such as X (formerly known as
+Twitter). Bluesky was built as a reference application for its
+underlying \emph{Authenticated Transfer Protocol}, or short ATProto, which was
+designed as an alternative to the established \emph{ActivityPub}
+protocol that forms the foundation of Mastodon and the Fediverse.
+ActivityPub is built around an inbox/outbox model, similar to that of email.
+A new user has to choose one of many available servers (instances)
+when creating a new account, after which they are able to interact
+with users from all participating instances. ATProto on the other
+hand features multiple independent components, each of which can be
+swapped out and self-hosted as long as it follows the protocol's specifications.
+
+While Mastodon has a smaller, but loyal user base of around 10
+million users\footnote{https://mastodon-analytics.com/}, Bluesky
+experienced rapid growth, especially after the 2024 US presidential
+election, with a current user count of around 40
+million.\footnote{https://bsky.jazco.dev/stats} Since both platforms
+are established in the wider market, the desire for
+individuals, companies, and institutions to be represented on both
+Mastodon and Bluesky has grown. However, maintaining multiple online
+presences leads to additional work for content creators. To reduce
+this duplicated work, bridging solutions such as Bridgy
+Fed\footnote{https://fed.brid.gy/} have emerged. Bridgy Fed provides
+a third party bridging service that sits in between Bluesky and
+Mastodon, translating posts from one network to the other by using
+synthetic bridged accounts on behalf of users that sign up and opt in
+to use the service.
+
+In this thesis, we want to take a different approach. Instead of a
+separate bridging service, we want to explore making Bluesky itself
+compatible with ActivityPub and thus all Mastodon instances. We
+therefore decsribe an ideal compatibility state that outlines how
+the user experience for users on both Bluesky and Mastodon would look
+like if Bluesky had full ActivityPub compatibility. We then package
+the solution into three work packages with increasing complexity that
+aim to achieve this ideal state. Finally, we answer the question of
+how close the ideal compatibility state can be reached with
+reasonable engineering effort and no protocol or implementation
+changes in ActivityPub and Mastodon.
+
+\section{Ideal state}
+
+The goal is to achieve seamless \enquote{network dual-citizenship},
+where a modified ATProto Personal Data Server (PDS) functions
+simultaneously as a native Bluesky PDS and a fully compliant
+ActivityPub instance. In this state, the protocol boundaries become
+invisible: the user maintains a single identity that can publish,
+subscribe, and moderate interactions accross both the ATProto and
+ActivityPub social graphs without relying on third-party bridging
+services. Interactions include liking, replying, and reposting.
+
+Users perceive a unified timeline where posts from both sources are
+shown, including conversation threads involving participants from
+both platforms. This interoperability extends beyond data exchange to
+include governance: user safety controls, such as blocks and content
+moderation flags, are federally enforced, ensuring that the user
+retains full agency and protection across both networks.
+
+\section{Work packages}
+
+\subsection{Package 1: Outbound}
+
+The first work package is about making Bluesky users and content
+available on Mastodon. It forms itself around the following user story:
+
+\begin{quote}
+  \itshape
+  \enquote{As a Bluesky user, I can give my handle to a Mastodon user. They
+    can follow me, see my posts, and interact with them. I can see their
+  interactions in my Bluesky notifications.}
+\end{quote}
+
+\noindent This package implements the core infrastructure required to make the
+Bluesky user discoverable and viewable on Mastodon. In order to
+achieve this, we need to make the following changes to
+the Bluesky PDS:
+
+\begin{enumerate}
+  \item \textbf{Identity \& discovery:} WebFinger endpoint that maps
+    the ATProto handle to an ActivityPub Actor URL and document. This
+    allows discovery of the user on Mastodon (i.e. appearing in
+    search results). An additional \texttt{/.well-known/nodeinfo}
+    endpoint provides information about the server and advertises
+    itself as a fediverse node.
+  \item \textbf{Outbound broadcast:} When a Bluesky post is created
+    on the PDS, it gets converted to an ActivityPub \textit{Note} and
+    delivered  to the inboxes of all known Mastodon followers.
+    Replies by users on the same PDS can also be delivered via
+    ActivityPub; replies from users on other PDSs will not be visible
+    in Mastodon at this point. Additionally, all users posts can be
+    fetched from ActivityPub using a user's \texttt{outbox} endpoint.
+  \item \textbf{Inbound listening:} Accept \emph{Follow}, \emph{Like},
+    and \emph{Create(Note)} (reply) activites. Follows will be stored
+    and push notifications will be created for likes and replies.
+\end{enumerate}
+
+\subsection{Package 2: Inbound}
+
+For this next step, we want to bring Mastodon content into Bluesky,
+by implementing the following user story:
+
+\begin{quote}
+  \itshape
+  \enquote{As a Bluesky user, I can search for a Mastodon user inside my
+    Bluesky app, follow them, see their posts in my timeline, and
+  interact with them.}
+\end{quote}
+
+\noindent This package deals with data intake and storage. The main
+challenge is tha one cannot write external data into the user's
+signed Merkle Search Tree (MST), the data structure that holds all
+user data. Instead, we need to build a secondary storage system into
+the PDS that stores all incoming ActivityPub activites. The following
+steps outline the features of this work package:
+
+\begin{enumerate}
+  \item \textbf{Virtual users:} When a user searches for
+    \texttt{@user@mastodon.social}, the PDS must fetch that actor's
+    profile and create a temporary \enquote{shadow profile} in the
+    local database such that the Bluesky client can render the
+    profile data in the UI. The Bluesky user can follow that profile,
+    resulting in a \textit{Follow} activity being sent to their instance.
+  \item \textbf{Shared inbox:} To scale efficiently, we implement a shared
+    inbox for the whole server. Requests to this inbox
+    include further information about routing activites to specific users.
+  \item \textbf{Custom feed generator:} We can implement a custom
+    Bluesky feed that queries the sidecar database for Mastodon posts
+    and merges them with local posts, enabling a hybrid feed with
+    posts from both networks.
+\end{enumerate}
+
+\subsection{Package 3: Governance \& Advanced Features}
+
+This package refines the user experience and ensures the PDS behaves
+safely within the wider ecosystem.
+
+\begin{enumerate}
+  \item \textbf{Moderation federation:} If a user blocks an account
+    in Bluesky, the PDS must broadcast a \textit{Block} activity to
+    ActivityPub. On the other hand, if a PDS receives a \textit{Flag}
+    (report) activity from Mastodon, it should ingest it into
+    ATProto's moderation system. Similary, content moderation (labels
+    in Bluesky, content warnings in Mastodon) should be seamlessly
+    translated between networks.
+  \item \textbf{Account migration:} Implementing the ActivityPub
+    \textit{Move} activity, allowing a user to forward their
+    followers to a different Mastodon instance if they choose to leave our PDS.
+\end{enumerate}
+
+\end{document}
