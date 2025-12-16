@@ -2,9 +2,12 @@
 
 \usepackage{setspace}
 \usepackage{csquotes}
+\usepackage{graphicx}
+\usepackage[noabbrev]{cleveref}
 
-\title{\vspace{-2.8cm}\textsc{\large Research Proposal} \\ ActivityPub
-  compatibility
+\title{\vspace{-3.6cm}\textsc{\large Research Proposal} \\
+  Exploring ActivityPub
+  interoperability
 for Bluesky}
 
 \author{Martin Sonnberger}
@@ -49,13 +52,13 @@ to use the service.
 
 In this thesis, we want to take a different approach. Instead of a
 separate bridging service, we want to explore making Bluesky itself
-compatible with ActivityPub and thus all Mastodon instances. We
-therefore decsribe an ideal compatibility state that outlines how
+interoperable with ActivityPub and thus all Mastodon instances. We
+therefore describe an ideal interoperability state that outlines how
 the user experience for users on both Bluesky and Mastodon would look
 like if Bluesky had full ActivityPub compatibility. We then package
 the solution into three work packages with increasing complexity that
 aim to achieve this ideal state. Finally, we answer the question of
-how close the ideal compatibility state can be reached with
+how close the ideal interoperability state can be reached with
 reasonable engineering effort and no protocol or implementation
 changes in ActivityPub and Mastodon.
 
@@ -66,7 +69,7 @@ where a modified ATProto Personal Data Server (PDS) functions
 simultaneously as a native Bluesky PDS and a fully compliant
 ActivityPub instance. In this state, the protocol boundaries become
 invisible: the user maintains a single identity that can publish,
-subscribe, and moderate interactions accross both the ATProto and
+subscribe, and moderate interactions across both the ATProto and
 ActivityPub social graphs without relying on third-party bridging
 services. Interactions include liking, replying, and reposting.
 
@@ -79,41 +82,78 @@ retains full agency and protection across both networks.
 
 \section{Work packages}
 
+First, we define the three participating user groups:
+
+\begin{enumerate}
+  \item \textbf{Mastodon users:} These are regular users having an
+    account on one of many Mastodon instances, for example
+    \texttt{mastodon.social}. They will be able to interact with
+    federated Bluesky users. The representative of this group is
+    \textit{Mike} and their Mastodon handle is \texttt{@mike@mastodon.social}.
+  \item \textbf{Federated Bluesky users:} These are Bluesky users
+    with an account on our modified PDS, hosted on
+    \texttt{fedisky.social}. Their accounts will be
+    federated, making their profiles and content visible on Mastodon.
+    They are able to interact with other Mastodon users as well as
+    regular Bluesky users on other PDSs. The representative of this
+    group is \textit{Frank}, and their handles are
+    \texttt{@frank.fedisky.social} and \texttt{@frank@fedisky.social}
+    for Bluesky and Mastodon respectively.
+  \item \textbf{Regular Bluesky users:} These are Bluesky users with
+    an account on some other, non-federated PDS, such as the default
+    \texttt{bsky.social} PDS. They will only be able to interact with
+    other Bluesky users, including federated Bluesky users. The
+    representative of this group is \textit{Bob} with their Bluesky
+    handle being \texttt{@bob.bsky.social}
+\end{enumerate}
+
 \subsection{Package 1: Outbound}
 
-The first work package is about making Bluesky users and content
+The first work package is about making federated Bluesky users and content
 available on Mastodon. It forms itself around the following user story:
 
 \begin{quote}
   \itshape
-  \enquote{As a Bluesky user, I can give my handle to a Mastodon user. They
+  \enquote{As a federated Bluesky user, I can give my handle to a
+    Mastodon user. They
     can follow me, see my posts, and interact with them. I can see their
   interactions in my Bluesky notifications.}
 \end{quote}
 
 \noindent This package implements the core infrastructure required to make the
-Bluesky user discoverable and viewable on Mastodon. In order to
+federated Bluesky user discoverable and viewable on Mastodon. In order to
 achieve this, we need to make the following changes to
 the Bluesky PDS:
 
 \begin{enumerate}
   \item \textbf{Identity \& discovery:} WebFinger endpoint that maps
     the ATProto handle to an ActivityPub Actor URL and document. This
-    allows discovery of the user on Mastodon (i.e. appearing in
+    allows discovery of the federated Bluesky user on Mastodon (i.e.
+      appearing in
     search results). An additional \texttt{/.well-known/nodeinfo}
     endpoint provides information about the server and advertises
-    itself as a fediverse node.
+    itself as a Fediverse node.
   \item \textbf{Outbound broadcast:} When a Bluesky post is created
     on the PDS, it gets converted to an ActivityPub \textit{Note} and
     delivered  to the inboxes of all known Mastodon followers.
-    Replies by users on the same PDS can also be delivered via
-    ActivityPub; replies from users on other PDSs will not be visible
-    in Mastodon at this point. Additionally, all users posts can be
-    fetched from ActivityPub using a user's \texttt{outbox} endpoint.
+    Replies by federated Bluesky users on the same PDS can also be delivered via
+    ActivityPub; replies from other Bluesky users will not be visible
+    in Mastodon at this point. Additionally, all the federated
+    Bluesky user's posts can be
+    fetched from ActivityPub using a federated Bluesky user's
+    \texttt{outbox} endpoint.
   \item \textbf{Inbound listening:} Accept \emph{Follow}, \emph{Like},
-    and \emph{Create(Note)} (reply) activites. Follows will be stored
-    and push notifications will be created for likes and replies.
+    and \emph{Create(Note)} (reply) activities. Follows will be stored,
+    and push notifications will be created for likes and replies. The
+    sequence diagram in \cref{fig:follow-sequence} illustrates what
+    happens when a Mastodon user follows a federated Bluesky user.
 \end{enumerate}
+
+\begin{figure}
+  \includegraphics[width=1.0\textwidth]{figures/follow}
+  \caption{Sequence diagram: Mastodon user follows federated Bluesky user.}
+  \label{fig:follow-sequence}
+\end{figure}
 
 \subsection{Package 2: Inbound}
 
@@ -122,28 +162,31 @@ by implementing the following user story:
 
 \begin{quote}
   \itshape
-  \enquote{As a Bluesky user, I can search for a Mastodon user inside my
+  \enquote{As a federated Bluesky user, I can search for a Mastodon
+    user inside my
     Bluesky app, follow them, see their posts in my timeline, and
   interact with them.}
 \end{quote}
 
 \noindent This package deals with data intake and storage. The main
-challenge is tha one cannot write external data into the user's
+challenge is that one cannot write external data into the federated
+Bluesky user's
 signed Merkle Search Tree (MST), the data structure that holds all
 user data. Instead, we need to build a secondary storage system into
-the PDS that stores all incoming ActivityPub activites. The following
+the PDS that stores all incoming ActivityPub activities. The following
 steps outline the features of this work package:
 
 \begin{enumerate}
-  \item \textbf{Virtual users:} When a user searches for
-    \texttt{@user@mastodon.social}, the PDS must fetch that actor's
+  \item \textbf{Virtual users:} When a federated Bluesky user searches for \\
+    \texttt{@mike@mastodon.social}, the PDS must fetch that Mike's
     profile and create a temporary \enquote{shadow profile} in the
     local database such that the Bluesky client can render the
-    profile data in the UI. The Bluesky user can follow that profile,
+    profile data in the UI. The federated Bluesky user can follow that profile,
     resulting in a \textit{Follow} activity being sent to their instance.
   \item \textbf{Shared inbox:} To scale efficiently, we implement a shared
     inbox for the whole server. Requests to this inbox
-    include further information about routing activites to specific users.
+    include further information about routing activities to specific
+    federated users.
   \item \textbf{Custom feed generator:} We can implement a custom
     Bluesky feed that queries the sidecar database for Mastodon posts
     and merges them with local posts, enabling a hybrid feed with
@@ -156,16 +199,18 @@ This package refines the user experience and ensures the PDS behaves
 safely within the wider ecosystem.
 
 \begin{enumerate}
-  \item \textbf{Moderation federation:} If a user blocks an account
+  \item \textbf{Moderation federation:} If a federated Bluesky user
+    blocks an account
     in Bluesky, the PDS must broadcast a \textit{Block} activity to
     ActivityPub. On the other hand, if a PDS receives a \textit{Flag}
     (report) activity from Mastodon, it should ingest it into
-    ATProto's moderation system. Similary, content moderation (labels
+    ATProto's moderation system. Similarly, content moderation (labels
     in Bluesky, content warnings in Mastodon) should be seamlessly
     translated between networks.
   \item \textbf{Account migration:} Implementing the ActivityPub
-    \textit{Move} activity, allowing a user to forward their
-    followers to a different Mastodon instance if they choose to leave our PDS.
+    \textit{Move} activity, allowing a federated Bluesky user to forward their
+    Mastodon followers to a different Mastodon instance if they
+    choose to leave our PDS.
 \end{enumerate}
 
 \end{document}
