@@ -1,0 +1,75 @@
+%loads the class that provides the titlepage and some general packages.
+\documentclass{UniVieCS_Thesis}
+
+%add the additional packages and macros that you want to use
+\input{packages_macros}
+
+% important update for glossaries, before document
+\loadglsentries{C_Back_Matter/acronyms.tex}
+\loadglsentries{C_Back_Matter/glossary.tex}
+\makeglossaries %https://www.overleaf.com/learn/latex/glossaries
+
+%shows fixme notes
+%\fxsetup{status=draft} % comment/delete this line if you want to
+% your final output
+
+\usepackage[ngerman, english]{babel} %if changed to
+% \usepackage[ngerman]{babel} "Table of contents" changes to
+% "Inhaltsverzeichnis", "abstract" becomes "Zusammenfassung" and
+% "references" is translated to "Literatur".
+
+%remove all the things you don't need and add all the things you
+% need. you can also change the order of the elements at your will.
+\begin{document}
+
+%Start with front matter
+
+%Choose the titlepage you want to use
+
+\input{A_Front_Matter/titlepage} %Creates the titlepage
+
+\clearpage
+\frontmatter{}
+\input{A_Front_Matter/acknowledgements} %adds the aknowledgements
+\input{A_Front_Matter/abstracts} % adds the abstract
+\input{A_Front_Matter/kurzfassung} %adds the "Kurzfassung"in german.
+\pagebreak
+
+\microtypesetup{protrusion=false}
+\tableofcontents{}
+% Use an optional list of tables / figures / algorithms / listings(code).
+\listoftables
+\listoffigures
+\cleardoublepage{}
+\listofalgorithms
+\addcontentsline{toc}{chapter}{List of Algorithms}
+\cleardoublepage{}
+\lstlistoflistings
+\cleardoublepage{}
+\microtypesetup{protrusion=true}
+
+\pagebreak
+
+%add your chapters here
+\mainmatter{}
+\input{B_Chapters/01_introduction}
+\input{B_Chapters/02_background}
+\input{B_Chapters/03_methodology}
+\input{B_Chapters/04_results}
+\input{B_Chapters/05_discussion}
+\input{B_Chapters/06_conclusion}
+
+\printbibliography
+
+\printglossary[type=\acronymtype]
+\printglossary
+
+\cleardoublepage{}
+\pagebreak
+
+%add your end matter here
+\appendix{}
+
+\input{C_Back_Matter/appendix}
+
+\end{document}
