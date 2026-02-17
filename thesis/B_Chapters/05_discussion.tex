@@ -1,1 +1,52 @@
 \chapter{Discussion}
+
+\section{Sidecar Architecture}
+
+As described in the previous chapter, Fedisky is designed as a
+\textit{sidecar container} as defined in
+\cite[Ch.\,3]{burnsDesigningDistributedSystems2024} and runs
+alongside its \textit{application container}, a Bluesky PDS. Sidecars
+are a common architectural pattern, where a secondary container
+provides auxiliary functionality to the primary application
+container, often without the application knowing. Sidecar containers
+share system resources and are scheduled to run in sync with the
+application container
+\cite[p.\,21]{burnsDesigningDistributedSystems2024}. This design
+allows Fedisky to operate independently while
+still closely integrating with the PDS.
+
+An alternative design could have been a centralized bridging service
+that bridges \textit{all} of Bluesky into the Fediverse, which is
+realized by Bridgy Fed (\autoref{sec:related-work-bridgy-fed}).
+Compared to a centralized bridging service, a sidecar container
+running alongside a single Bluesky PDS instance, can share resources
+with the PDS, most importantly the server's hostname, which allows it
+to operate under the same domain and thus provide a single shared
+identity for users across Bluesky and Mastodon, e.g.
+\texttt{alice.fedisky.social} in Bluesky becomes
+\texttt{@alice@fedisky.social} in Mastodon. Additionally, the sidecar
+pattern allows for operator autonomy, where each PDS operator can
+choose to deploy Fedisky independently, or not. It also reduces the
+scope of the bridge, as it only needs to handle traffic for a single
+PDS instance, simplifying development and maintenance.
+
+Another approach would be to fork and modify the PDS itself, thus
+integrating bridging functionality directly into the PDS. We
+considered this approach initially when designing Fedisky, but chose
+the sidecar pattern instead for several reasons. Forking the PDS
+would significantly increase the maintenance burden and development
+complexity, as one would need to keep up with upstream changes
+constantly to ensure compatibility. The sidecar avoids this by only
+consuming the PDS's public APIs, which are stable
+contracts based on AT Protocol Lexicons \cite{HTTPReferenceBluesky}.
+In addition, the sidecar pattern allows for better separation of
+concerns, as all bridging logic is contained within the sidecar,
+rather than the PDS being responsible for both AT Protocol and
+ActivityPub compliance and therefore tightly coupling two protocol
+implementations, making each harder to reason about and test in
+isolation. Furthermore, the sidecar gives more deployment
+flexibility, as operators can choose to start or stop the bridge
+independently of the PDS. Since communication between the sidecar and
+the PDS is done through HTTP APIs, the sidecar can be developed a
+different technology stack, and is automatically compatible with any
+PDS implementation that adheres to the AT Protocol specifications.
