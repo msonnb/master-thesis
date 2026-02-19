@@ -1,0 +1,20 @@
+{
+  "subject": "acct:alice@fedisky.social",
+  "aliases": ["https://fedisky.social/users/did:plc:n3jcidccul6u3lif5q4rh42x"],
+  "links": [
+    {
+      "rel": "self",
+      "href": "https://fedisky.social/users/did:plc:n3jcidccul6u3lif5q4rh42x",
+      "type": "application/activity+json"
+    },
+    {
+      "rel": "http://webfinger.net/rel/profile-page",
+      "href": "https://bsky.app/profile/alice.fedisky.social"
+    },
+    {
+      "rel": "http://webfinger.net/rel/avatar",
+      "href": "https://fedisky.social/xrpc/com.atproto.sync.getBlob?did=did%3Aplc%3An3jcidccul6u3lif5q4rh42x&cid=bafkreiahfo2qkotgr475q2kx4psbffojwup6fkchnw43y2i44uhanmy2em",
+      "type": "image/jpeg"
+    }
+  ]
+}

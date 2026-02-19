@@ -71,11 +71,74 @@ incoming and outgoing activities, and a KV-store for caching and
 storing federation-related data such as public keys and remote actor
 information.
 
-\subsection{High-Level Data Flow}
+\subsection{Subsystems}
 
-\subsection{Component Overview}
+\section{Core Flows}
 
-\subsection{Dependency Injection}
+\subsection{Actor and Identity Discovery}
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\textwidth]{figures/actor-discovery.png}
+  \caption{Sequence diagram showing the actor and identity discovery
+    flow when a Mastodon user tries to follow a Bluesky user on the
+  PDS.}
+  \label{fig:actor-discovery-sequence}
+\end{figure}
+
+When a Mastodon user tries to follow a federated Bluesky user on the
+PDS, the Mastodon instance needs to discover the corresponding
+ActivityPub actor for that user in order to send the follow request.
+This flow is illustrated in \autoref{fig:actor-discovery-sequence}.
+The Mastodon instance first queries the WebFinger endpoint with the
+user's handle (e.g. \ttt{@alice@fedisky.social}) to discover the
+corresponding ActivityPub actor URL. Fedisky first constructs the
+ATProto handle by prepending the localpart (in this case,
+\ttt{alice}) to the PDS's hostname (e.g. \ttt{fedisky.social}),
+resulting in \ttt{alice.fedisky.social}. Note that the ActivityPub
+handle domain and PDS domain do not have to match, but in this
+example we use the same domain for simplicity. Fedisky then resolves
+this handle using the PDS's \ttt{com.atproto.identity.resolveHandle}
+API, which returns the corresponding DID if a matching user is found.
+If a user is found, Fedisky constructs the ActivityPub actor URL
+using the user's DID, resulting in
+\ttt{https://fedisky.social/users/\{did\}}. This URL is returned to
+the Mastodon instance in the WebFinger response, as shown in
+\autoref{lst:webfinger-response}. In addition to the actor URL, the
+response also includes references to the user's profile page and avatar.
+
+\lstinputlisting[caption=WebFinger response for
+  \ttt{@alice@fedisky.social},
+label=lst:webfinger-response, style=jsonstyle]{listings/webfinger.json}
+
+After receiving the WebFinger response, the Mastodon instance can
+then query the actor endpoint to fetch the user's actor document,
+which includes the user's profile information, public keys, and inbox
+URLs. The object conforms to the Activity Vocabulary \ttt{Person}
+type as defined in \cite{snellActivityVocabulary2017}. To construct
+the actor document, Fedisky fetches the user's profile record form
+the PDS using the \ttt{com.atproto.repo.getRecord} API. From the
+profile record, Fedisky extracts the user's display name,
+description, as well as avatar and banner images. Finally, Fedisky
+retrieves the user's public keys from the database. If no keys exist
+yet, Fedisky generates new RSA and Ed25519 key pairs and stores them
+in the database.
+
+In an effort to link accounts referring to the same identity,
+\textcite{barrettBridgingIdentityAccount2025} proposes the use of
+account links. In this approach, instead of relying on a separate
+\enquote{meta account} that links all the user's accounts together,
+accounts reference each other. Platforms can then use these references
+to show highlighted links to these other accounts on different
+platforms. Fedisky
+follows this approach and includes the user's ATProto URI in the
+\ttt{alsoKnownAs} field of the actor document, allowing Fediverse
+instance to link the ActivityPub actor back to the original Bluesky
+user and profile.
+
+\subsection{Outbound: ATProto Post to ActivityPub Note}
+
+\subsection{Inbound: ActivityPub Activity to ATProto Record}
 
 \section{Data Model}
 
@@ -163,9 +226,99 @@ handle is \ttt{bluesky.\{hostname\}} and display name is
 \enquote{Bluesky Bridge}, again configurable by the operator via
 environment variables.
 
-\subsection{Account Lifecycle}
-
 \subsection{Attribution Model}
+
+Since both bridge accounts post content on behalf on users and do not
+carry any user identity in their handle or display name, we need to
+ensure proper attribution of content to the original authors. For
+incoming Fediverse replies posted by the Mastodon bridge account, we
+include the original author's handle in the first line of the post
+content, e.g. \enquote{@bob@mastodon.social replied:}, followed by
+the actual reply content. Similarly, federated Bluesky replies from
+third-party PDS instances sent by the Bluesky bridge account include
+an attribution line with the original author's Bluesky handle, e.g.
+\enquote{alice.bsky.social replied:}, followed by the reply content.
+In both cases, the handle is a clickable link to the original
+profile, allowing users to easily find and follow the original author
+if they wish. Additionally, since Mastodon content is formatted in
+HTML, we need to ensure all content is properly escaped to prevent
+Cross-Site-Scripting (XSS) vulnerabilities.
+
+\section{Inbound Federation}
+
+\subsection{ActivityPub Endpoints}
+
+Using Fedify together with its Express HTTP
+integration\footnote{\url{https://fedify.dev/manual/integration\#express}},
+we expose the following ActivityPub endpoints:
+
+\begin{itemize}
+  \item \ttt{GET /.well-known/webfinger} \\
+    The WebFinger endpoint
+    for user discovery. When a Mastodon instance encounters a handle
+    such as \ttt{@alice@fedisky.social}, it will query this endpoint
+    to discover the corresponding ActivityPub actor URL. Fedisky
+    resolves the handle using the PDS's
+    \ttt{com.atproto.identity.resolveHandle} API, and if a matching
+    PDS user is found, constructs an ActivityPub actor URL using the
+    user's DID as the unique identifier, i.e.
+    \ttt{https://fedisky.social/users/\{did\}}.
+  \item \ttt{GET /users/\{did\}} \\
+    The actor endpoint. Returns an ActivityPub \ttt{Person} object
+    representing the Bluesky user with the given DID. Includes the
+    user's inbox, outbox, followers, and following URIs, as well as
+    their public keys (both RSA and Ed25519), and profile information
+    such as display name and avatar. It also includes a
+    \ttt{alsoKnownAs} field with the user's ATProto URI, in order to
+    link the ActivityPub actor back to the original PDS user and
+    identity. The Mastodon bridge account does not have an
+    ActivityPub actor representation.
+  \item \ttt{POST /users/\{did\}/inbox} \\
+    The inbox endpoint for receiving incoming activities from the
+    Fediverse. This is where we receive activities such as
+    \ttt{Follow} requests. When an activity is received, we verify
+    the HTTP signature to ensure it is from a trusted source, and
+    then dispatch it to the appropriate handler based on the activity type.
+  \item \ttt{POST /inbox} \\
+    A server-wide shared inbox endpoint that some Fediverse instances
+    support for
+    more efficient delivery. Fedisky also supports this endpoint for
+    incoming activities, and dispatches them in the same way as the
+    user-specific inbox.
+  \item \ttt{GET /users/\{did\}/outbox} \\
+    Paginated collection of posts, likes, and reposts, aggregated
+    from the PDS using its \ttt{com.atproto.repo.listRecords} API.
+    This allows Mastodon instance to fetch the user's content and
+    engagements for display on their profile and timelines.
+  \item \ttt{GET /users/\{did\}/followers} and \ttt{GET
+    /users/\{did\}/following} \\
+    Paginated collections of followers and following, based on the
+    \ttt{ap\_follow} table. This allows Mastodon instances to display
+    the user's followers and following lists, and to determine which
+    users they should receive activities from.
+  \item \ttt{GET /posts/\{uri\}} \\
+    Endpoint for fetching a specific post by its ATProto URI, used by
+    Mastodon instances to fetch the content and metadata of a post
+    when displaying it or when a user clicks on a link to the post.
+    Fedisky resolves the ATProto URI using the PDS's
+    \ttt{com.atproto.repo.getRecord} API, and returns an ActivityPub
+    Note object with the post content, author information, and any
+    media attachments.
+  \item \ttt{GET /nodeinfo/2.1} \\
+    The NodeInfo\footnote{\url{https://nodeinfo.diaspora.software/}}
+    endpoint providing metadata about the Fedisky
+    instance, such as software name and version, and supported
+    features. This is used by Mastodon instances to determine
+    compatibility and capabilities of the Fedisky bridge.
+\end{itemize}
+
+\subsection{Inbox Processing}
+
+\subsection{Reply Bridging}
+
+\subsection{Post Mapping for Reply Threading}
+
+\subsection{Engagement Notifications}
 
 \section{Outbound Federation}
 
@@ -176,18 +329,6 @@ environment variables.
 \subsection{Activity Delivery}
 
 \subsection{External Reply Discovery}
-
-\section{Inbound Federation}
-
-\subsection{ActivityPub Endpoints}
-
-\subsection{Inbox Processing}
-
-\subsection{Reply Bridging}
-
-\subsection{Post Mapping for Reply Threading}
-
-\subsection{Engagement Notifications}
 
 \section{Conversion Layer}
 

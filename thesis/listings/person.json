@@ -1,0 +1,85 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/activitystreams",
+    "https://w3id.org/security/v1",
+    "https://w3id.org/security/data-integrity/v1",
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/multikey/v1",
+    {
+      "alsoKnownAs": {
+        "@id": "as:alsoKnownAs",
+        "@type": "@id"
+      },
+      "manuallyApprovesFollowers": "as:manuallyApprovesFollowers",
+      "movedTo": {
+        "@id": "as:movedTo",
+        "@type": "@id"
+      },
+      "toot": "http://joinmastodon.org/ns#",
+      "Emoji": "toot:Emoji",
+      "featured": {
+        "@id": "toot:featured",
+        "@type": "@id"
+      },
+      "featuredTags": {
+        "@id": "toot:featuredTags",
+        "@type": "@id"
+      },
+      "discoverable": "toot:discoverable",
+      "suspended": "toot:suspended",
+      "memorial": "toot:memorial",
+      "indexable": "toot:indexable",
+      "schema": "http://schema.org#",
+      "PropertyValue": "schema:PropertyValue",
+      "value": "schema:value",
+      "misskey": "https://misskey-hub.net/ns#",
+      "_misskey_followedMessage": "misskey:_misskey_followedMessage",
+      "isCat": "misskey:isCat"
+    }
+  ],
+  "id": "https://fedisky.social/users/did:plc:n3jcidccul6u3lif5q4rh42x",
+  "type": "Person",
+  "inbox": "https://fedisky.social/users/did:plc:n3jcidccul6u3lif5q4rh42x/inbox",
+  "assertionMethod": [
+    {
+      "id": "https://fedisky.social/users/did:plc:n3jcidccul6u3lif5q4rh42x#main-key",
+      "type": "Multikey",
+      "controller": "https://fedisky.social/users/did:plc:n3jcidccul6u3lif5q4rh42x",
+      "publicKeyMultibase": "..."
+    },
+    {
+      "id": "https://fedisky.social/users/did:plc:n3jcidccul6u3lif5q4rh42x#key-2",
+      "type": "Multikey",
+      "controller": "https://fedisky.social/users/did:plc:n3jcidccul6u3lif5q4rh42x",
+      "publicKeyMultibase": "z6MkoFYMpforkTF9vy2amLuX5y6AN4ysr5w62drTrM7sZvvw"
+    }
+  ],
+  "publicKey": {
+    "id": "https://fedisky.social/users/did:plc:n3jcidccul6u3lif5q4rh42x#main-key",
+    "type": "CryptographicKey",
+    "owner": "https://fedisky.social/users/did:plc:n3jcidccul6u3lif5q4rh42x",
+    "publicKeyPem": "..."
+  },
+  "alsoKnownAs": "at://did%3Aplc%3An3jcidccul6u3lif5q4rh42x",
+  "endpoints": {
+    "type": "as:Endpoints",
+    "sharedInbox": "https://fedisky.social/inbox"
+  },
+  "followers": "https://fedisky.social/users/did:plc:n3jcidccul6u3lif5q4rh42x/followers",
+  "following": "https://fedisky.social/users/did:plc:n3jcidccul6u3lif5q4rh42x/following",
+  "icon": {
+    "type": "Image",
+    "mediaType": "image/jpeg",
+    "url": "https://fedisky.social/xrpc/com.atproto.sync.getBlob?did=did%3Aplc%3An3jcidccul6u3lif5q4rh42x&cid=bafkreiahfo2qkotgr475q2kx4psbffojwup6fkchnw43y2i44uhanmy2em"
+  },
+  "image": {
+    "type": "Image",
+    "mediaType": "image/jpeg",
+    "url": "https://fedisky.social/xrpc/com.atproto.sync.getBlob?did=did%3Aplc%3An3jcidccul6u3lif5q4rh42x&cid=bafkreiahfo2qkotgr475q2kx4psbffojwup6fkchnw43y2i44uhanmy2em"
+  },
+  "name": "Alice Alisson",
+  "outbox": "https://fedisky.social/users/did:plc:n3jcidccul6u3lif5q4rh42x/outbox",
+  "preferredUsername": "alice",
+  "summary": "",
+  "url": "https://bsky.app/profile/alice.fedisky.social"
+}
