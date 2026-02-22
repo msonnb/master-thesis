@@ -138,7 +138,93 @@ user and profile.
 
 \subsection{Outbound: ATProto Post to ActivityPub Note}
 
+\begin{figure}
+  \centering
+  \includegraphics[width=\textwidth]{figures/outbound.png}
+  \caption{Sequence diagram showing the outbound ATProto post to
+  ActivityPub note conversion flow.}
+  \label{fig:outbound}
+\end{figure}
+
+When a Bluesky user creates or deletes a post on the PDS, Fedisky
+propagates these changes to the Fediverse so that Mastodon users
+following that user receive updates. This flow is illustrated in the
+sequence diagram in \autoref{fig:outbound}.
+
+Fedisky receives real-time updates from the ATProto firehose, a
+WebSocket stream that delivers commits as
+CBOR\footnote{\url{https://atproto.com/specs/data-model}}-encoded
+frames. Each frame contains repository operations (create, update,
+or delete) along with metadata such as the repository DID and
+sequence number. The firehose processor decodes the CBOR frame and
+extracts the repository DID, operations, and sequence information.
+It then filters operations to only process those that represent
+record creation or deletions for collections that Fedisky can
+convert to ActivityPub activities.
+
+For create operations, the processor first fetches the complete
+record from the PDS using the \ttt{com.atproto.repo.getRecord} API,
+providing the repository DID, collection identifier (e.g.
+\ttt{app.bsky.feed.post}), and record key. Once the record is
+retrieved, the processor queries the record converter registry to
+obtain the appropriate converter for the collection type. The
+registry returns a converter instance that implements the
+conversion logic for that specific ATProto record type.
+
+The converter then transforms the ATProto record into an
+ActivityPub \ttt{Create} activity containing a \ttt{Note} object.
+During conversion, if the post is a reply, the converter queries
+the database to look up the parent's post ActivityPub mapping,
+which maps the ATProto URI to the corresponding ActivityPub object
+ID and actor inbox. This mapping is necessary to construct the
+\ttt{inReplyTo} property of the ActivityPub Note. If the post
+contains embedded images or media, the converter builds the blob URLs
+using the PDS's \ttt{com.atproto.sync.getBlob} API, and includes them
+as attachments in the Note. Additionally, the converter transforms
+plain text into HTML and ATProto self-labels into ActivityPub content
+warnings if necessary. A detailed explanation of the conversion logic
+can be found in \autoref{sec:conversion-layer}.
+
+After conversion completes, Fedisky store the post mapping in the
+database, recording the ATProto URI, author DID, and creation
+timestamp. This mapping enables Fedisky to track which posts have
+been federated and to handle subsequent operations like deletions. If
+the post is a reply to a bridge account post (i.e. a post originally
+created by a Fediverse user and relayed back to Bluesky), Fedisky
+performs and additional step: It looks up the bridge post mapping to
+retrieve the bridge actor's ID and inbox URL, then sends the
+\ttt{Create} activity directly to that actor's inbox. This ensures
+that the original Fediverse author receives notifications about
+replies to their content.
+
+Finally, Fedisky delivers the \ttt{Create} activity to all the
+author's federated followers. The Fedify router queries the database
+to retrieve the list of followers and for each follower, it
+determines the appropriate inbox URL (either the follower's personal
+inbox or their instance's shared inbox) and sends a request
+containing the activity to that inbox endpoint. The activity is
+signed using the author's private key to authenticate the request
+according to ActivityPub's HTTP signature specification.
+
+For delete operations, the flow is simpler. The processor constructs
+either a \ttt{Delete} activity (for post deletions) or an \ttt{Undo}
+activity (for undoing a like or repost) targeting the ActivityPub
+object corresponding to the deleted ATProto record. If the deletion
+is for a post, Fedisky also cleans up any associated database entries
+related to that post. The \ttt{Delete} or \ttt{Undo} activity is then
+delivered to all followers using the same inbox delivery mechanism as
+create operations, ensuring that federated instances are notified of
+the deletion.
+
 \subsection{Inbound: ActivityPub Activity to ATProto Record}
+
+\begin{figure}
+  \centering
+  \includegraphics[height=\dimexpr\textheight-38.2pt]{figures/inbound.png}
+  \caption{Sequence diagram showing the inbound ActivityPub activity
+  to ATProto record conversion flow.}
+  \label{fig:inbound}
+\end{figure}
 
 \section{Data Model}
 
@@ -320,17 +406,7 @@ we expose the following ActivityPub endpoints:
 
 \subsection{Engagement Notifications}
 
-\section{Outbound Federation}
-
-\subsection{Firehose Processor}
-
-\subsection{Record Conversion}
-
-\subsection{Activity Delivery}
-
-\subsection{External Reply Discovery}
-
-\section{Conversion Layer}
+\section{Conversion Layer}\label{sec:conversion-layer}
 
 \subsection{Post Converter}
 
