@@ -71,7 +71,7 @@ incoming and outgoing activities, and a KV-store for caching and
 storing federation-related data such as public keys and remote actor
 information.
 
-\subsection{Subsystems}
+\section{Architecture}\label{sec:architecture}
 
 Fedisky is structured around a set of loosely coupled subsystems,
 each responsible for a distinct concern. These subsystems are wired
@@ -82,9 +82,9 @@ managers, the Fedify federation instance, and the logger. The main
 service class, \ttt{APFederationService}, acts as the top-level
 orchestrator: it initializes the database, provisions the bridge
 accounts, starts the HTTP server, and conditionally launches the
-three background processors described below.
+background processors.
 
-\subsubsection{PDS and AppView Clients}
+\subsection{PDS and AppView Clients}
 
 The \ttt{PDSClient} and \ttt{AppViewClient} modules provide thin
 wrappers around the ATProto XRPC APIs. The PDS client is used for all
@@ -96,7 +96,7 @@ through the local PDS. Separating the two clients reflects the
 architectural distinction in AT Protocol between the PDS as the
 authoritative data store and the AppView as a read-optimized aggregation layer.
 
-\subsubsection{Firehose Processor}
+\subsection{Firehose Processor}
 
 The \ttt{FirehoseProcessor} subscribes to the PDS's
 \ttt{com.atproto.sync.subscribeRepos} WebSocket endpoint and drives
@@ -115,61 +115,7 @@ add newly created local posts to the \ttt{ap\_monitored\_post} table
 for later processing by the Constellation processor. On connection
 loss, the processor waits five seconds before automatically reconnecting.
 
-\subsubsection{Federation Layer}
-
-The federation layer is implemented using Fedify as exposed via an
-Express HTTP integration. It registers the WebFinger, actor, inbox,
-outbox, followers, following, and NodeInfo endpoints described in
-\autoref{sec:activitypub-endpoints}. Fedify handles the low-level
-ActivityPub protocol concerns: verifying and signing HTTP requests,
-and managing the message queue and KV store backed by a dedicated
-SQLite database. The application layer registers dispatchers that
-Fedify calls for each activity type or collection lookup, which in
-turn delegate to the appropriate database queries or converter logic.
-
-\subsubsection{Inbox Handlers}
-
-The inbox module registers Fedify listeners for each supported
-inbound activity type: \ttt{Follow}, \ttt{Undo}, \ttt{Delete},
-\ttt{Like}, \ttt{Announce}, and \ttt{Create}. Each handler performs
-the relevant database mutation and, in case of  \ttt{Follow},
-dispatches an \ttt{Accept} response. The \ttt{Create(Note)} handler
-additionally invokes the post converter to produce an ATProto record
-and write it to the PDS via the Mastodon bridge account, as described
-in \autoref{sec:core-inbound-federation}.
-
-\subsubsection{Conversion Layer}
-
-The conversion layer provides bidirectional translation between
-ATProto records and ActivityPub objects. A
-\ttt{RecordConverterRegistry} maps ATProto collection identifiers to
-a converter instance implementing a common interface with
-\ttt{toActivityPub} and \ttt{toRecord} methods. The post converter is
-the most complex: in the outbound direction it transforms ATProto
-facets into ActivityPub \ttt{Mention} tags, embeds media attachments,
-converts self-labels into content warnings, and constructs the
-correct \ttt{inReplyTo} chain. In the inbound direction it parses the
-HTML content of an ActivityPub \ttt{Note}, reconstructs ATProto
-facets, and prepends the attribution line. Supporting utilities
-handle blob downloading and upload, HTML parsing, and label mapping.
-A more detailed explanation of the conversion logic can be found in
-\autoref{sec:conversion-layer}.
-
-\subsubsection{Bridge Account System}
-The two bridge accounts are managed by the
-\ttt{MastodonBridgeAccountManager} and
-\ttt{BlueskyBridgeAccountManager}, both subclassing an abstract
-\ttt{BridgeAccountManager}. On startup, each manager checks the
-database for stored credentials. If found, it attempts to refresh the
-session, falling back to a password login if the refresh token is
-expired. If no account record exists, it creates a new PDS account
-using the configured handle and a random password. Once initialized,
-each manager exposes the account's DID and a valid access token for
-use in XRPC calls. The Mastodon bridge account is hidden from
-ActivityPub discovery, while the Bluesky bridge account is exposed as
-a regular actor.
-
-\subsubsection{Constellation Processor}
+\subsection{Constellation Processor}
 
 The \ttt{ConstellationProcessor} runs as a periodic background job,
 polling at a configurable interval (default 60 seconds). On each run,
@@ -187,7 +133,7 @@ Bluesky bridge account, and delivered to the original post author's
 followers via Fedify. The \ttt{ap\_external\_reply} record is then
 created and the monitored post's \ttt{lastChecked} timestamp is updated.
 
-\subsubsection{DM Notification Processor}
+\subsection{DM Notification Processor}
 
 The \ttt{DMNotificationProcessor} polls the database at a
 configurable interval (default 5 minutes) for likes and reposts that
@@ -201,13 +147,118 @@ account as the sender. The message includes the display names of the
 engaging Fediverse actors, resolved by fetching their ActivityPub
 profiles, and a truncated excerpt of the post content.
 
-\subsubsection{Database Layer}
+\subsection{Database}\label{sec:database}
 
 All persistent state is stored in a SQLite database through Kysely. A
-second SQLite database is used exclusively  by Fedify for its
-internal KV store and message queue. Schema changes are manged
+second SQLite database is used exclusively by Fedify for its
+internal KV store and message queue. Schema changes are managed
 through numbered migration files, each exporting \ttt{up()} and
 \ttt{down()} functions, which are applied automatically on service startup.
+
+\subsubsection{Identity \& Cryptography}
+
+\begin{itemize}
+  \item \ttt{ap\_key\_pair} -- Stores the cryptographic key pairs
+    used for HTTP signature signing. Each local PDS user gets two key
+    pairs generated on first access: one RSA for compatibility with older
+    ActivityPub implementations, and one Ed25519 for modern servers.
+    The keys are stored as PEM-encoded strings.
+  \item \ttt{ap\_bridge\_account} and
+    \ttt{ap\_bluesky\_bridge\_account} -- Singleton tables that store
+    the credentials for the two bridge accounts (see
+    \autoref{sec:bridge-account-system}).
+\end{itemize}
+
+\subsubsection{Social Graph}
+
+\begin{itemize}
+  \item \ttt{ap\_follow} -- Records which ActivityPub actors follow
+    which local PDS users. This is the core table for activity
+    delivery, as it determines which users should receive which
+    activities based on their follow relationships. It stores the
+    follower's inbox URL and shared inbox URL for efficient delivery.
+\end{itemize}
+
+\subsubsection{Content Mapping}
+
+\begin{itemize}
+  \item \ttt{ap\_post\_mapping} -- Maps ATProto post URIs to their
+    original ActivityPub Note IDs and author information. This table
+    is essential for correct reply threading.
+  \item \ttt{ap\_external\_reply} -- Stores external Bluesky replies
+    from other PDS instances that have been federated via the
+    Constellation processor. Primarily for deduplication as the
+    Constellation API is polled repeatedly.
+  \item \ttt{ap\_monitored\_post} -- The work queue for the
+    Constellation processor, which tracks which posts need to be
+    checked for new external replies.
+\end{itemize}
+
+\subsubsection{Engagement Tracking}
+
+\begin{itemize}
+  \item \ttt{ap\_like} and \ttt{ap\_repost} -- Stores incoming
+    ActivityPub \ttt{Like} and \ttt{Announce} activities targeting
+    local posts. The tables main purpose are to track engagements for
+    display (e.g. showing like counts) and batching engagement for DM
+    notifications.
+\end{itemize}
+
+\section{Bridge Account System}\label{sec:bridge-account-system}
+
+\subsection{Why Two Bridge Accounts?}
+
+Fedisky uses two special \enquote{bridge accounts} to facilitate
+bridging between the AT Protocol and ActivityPub. The first is the
+Mastodon bridge account, which is hidden from users in
+ActivityPub and is used to post incoming Fediverse replies as ATProto
+posts on the PDS, so that they appear in the Bluesky user's thread
+and can be replied to and interacted with like normal posts. Its
+handle and display name can be configured by the operator, with the
+default being \ttt{mastodon.\{hostname\}} and \enquote{Mastodon
+Bridge} respectively.
+
+The second one is the Bluesky bridge account, which is used to
+federate replies from Bluesky users on other PDS instances to the
+Fediverse. This allows users on Mastodon to see and interact with
+replies from users on other PDS instances, which would otherwise be
+invisible to the Fediverse. The Bluesky bridge account's default
+handle is \ttt{bluesky.\{hostname\}} and display name is
+\enquote{Bluesky Bridge}, again configurable by the operator via
+environment variables.
+
+\subsection{Account Lifecycle}
+
+The two bridge accounts are managed by the
+\ttt{MastodonBridgeAccountManager} and
+\ttt{BlueskyBridgeAccountManager}, both subclassing an abstract
+\ttt{BridgeAccountManager}. On startup, each manager checks the
+database for stored credentials. If found, it attempts to refresh the
+session, falling back to a password login if the refresh token is
+expired. If no account record exists, it creates a new PDS account
+using the configured handle and a random password. Once initialized,
+each manager exposes the account's DID and a valid access token for
+use in XRPC calls. The Mastodon bridge account is hidden from
+ActivityPub discovery, while the Bluesky bridge account is exposed as
+a regular actor.
+
+\subsection{Attribution Model}
+
+Since both bridge accounts post content on behalf on users and do not
+carry any user identity in their handle or display name, we need to
+ensure proper attribution of content to the original authors. For
+incoming Fediverse replies posted by the Mastodon bridge account, we
+include the original author's handle in the first line of the post
+content, e.g. \enquote{@bob@mastodon.social replied:}, followed by
+the actual reply content. Similarly, federated Bluesky replies from
+third-party PDS instances sent by the Bluesky bridge account include
+an attribution line with the original author's Bluesky handle, e.g.
+\enquote{alice.bsky.social replied:}, followed by the reply content.
+In both cases, the handle is a clickable link to the original
+profile, allowing users to easily find and follow the original author
+if they wish. Additionally, since Mastodon content is formatted in
+HTML, we need to ensure all content is properly escaped to prevent
+Cross-Site-Scripting (XSS) vulnerabilities.
 
 \section{Core Flows}
 
@@ -363,7 +414,7 @@ Record}\label{sec:core-inbound-federation}
   \label{fig:inbound}
 \end{figure}
 
-\autoref{fig:inound} shows the inbound flow for incoming ActivityPub
+\autoref{fig:inbound} shows the inbound flow for incoming ActivityPub
 activities. All incoming activities from the Fediverse are delivered
 to Fedisky's
 inbox endpoints by the remote ActivityPub instance. Fedify first
@@ -442,117 +493,18 @@ ATProto URI, the original ActivityPub note ID, the actor URI, and the
 actor's inbox URL, enabling future operations such as deletions to
 locate the bridged post.
 
-\section{Data Model}
-
-\subsection{Database Schema}
-
-\subsubsection{Identity \& Cryptography}
-
-\begin{itemize}
-  \item \ttt{ap\_key\_pair} -- Stores the cryptographic key pairs
-    used for HTTP signature signing. Each local PDS user gets two key
-    pairs generated on first access: one RSA for compatibility with older
-    ActivityPub implementations, and one Ed25519 for modern servers.
-    The keys are stored as PEM-encoded strings.
-  \item \ttt{ap\_bridge\_account} and
-    \ttt{ap\_bluesky\_bridge\_account} -- Singleton tables that store
-    the credentials for the two bridge accounts (see
-    \autoref{sec:bridge-account-system}).
-\end{itemize}
-
-\subsubsection{Social Graph}
-
-\begin{itemize}
-  \item \ttt{ap\_follow} -- Records which ActivityPub actors follow
-    which local PDS users. This is the core table for activity
-    delivery, as it determines which users should receive which
-    activities based on their follow relationships. It stores the
-    follower's inbox URL and shared inbox URL for efficient delivery.
-\end{itemize}
-
-\subsubsection{Content Mapping}
-
-\begin{itemize}
-  \item \ttt{ap\_post\_mapping} -- Maps ATProto post URIs to their
-    original ActivityPub Note IDs and author information. This table
-    is essential for correct reply threading.
-  \item \ttt{ap\_external\_reply} -- Stores external Bluesky replies
-    from other PDS instances that have been federated via the
-    Constellation processor. Primarily for deduplication as the
-    Constellation API is polled repeatedly.
-  \item \ttt{ap\_monitored\_post} -- The work queue for the
-    Constellation processor, which tracks which posts need to be
-    checked for new external replies.
-\end{itemize}
-
-\subsubsection{Engagement Tracking}
-
-\begin{itemize}
-  \item \ttt{ap\_like} and \ttt{ap\_repost} -- Stores incoming
-    ActivityPub \ttt{Like} and \ttt{Announce} activities targeting
-    local posts. The tables main purpose are to track engagements for
-    display (e.g. showing like counts) and batching engagement for DM
-    notifications.
-\end{itemize}
-
-\subsection{Migration Strategy}
-
-Migrations are implemented using Kysely's built-in migration system,
-which allows us to define schema changes in a type-safe manner. Each
-migration is defined as a numbered TypeScript file exporting
-\ttt{up()} and \ttt{down()} functions. On service startup, pending
-migrations are automatically applied in order. This approach allows
-us to evolve the database schema over time while ensuring data
-integrity and providing a clear history of schema changes.
-
-\section{Bridge Account System}\label{sec:bridge-account-system}
-
-\subsection{Why Two Bridge Accounts?}
-
-Fedisky uses two special \enquote{bridge accounts} to facilitate
-bridging between the AT Protocol and ActivityPub. The first is the
-Mastodon bridge account, which is hidden from users in
-ActivityPub and is used to post incoming Fediverse replies as ATProto
-posts on the PDS, so that they appear in the Bluesky user's thread
-and can be replied to and interacted with like normal posts. Its
-handle and display name can be configured by the operator, with the
-default being \ttt{mastodon.\{hostname\}} and \enquote{Mastodon
-Bridge} respectively.
-
-The second one is the Bluesky bridge account, which is used to
-federate replies from Bluesky users on other PDS instances to the
-Fediverse. This allows users on Mastodon to see and interact with
-replies from users on other PDS instances, which would otherwise be
-invisible to the Fediverse. The Bluesky bridge account's default
-handle is \ttt{bluesky.\{hostname\}} and display name is
-\enquote{Bluesky Bridge}, again configurable by the operator via
-environment variables.
-
-\subsection{Attribution Model}
-
-Since both bridge accounts post content on behalf on users and do not
-carry any user identity in their handle or display name, we need to
-ensure proper attribution of content to the original authors. For
-incoming Fediverse replies posted by the Mastodon bridge account, we
-include the original author's handle in the first line of the post
-content, e.g. \enquote{@bob@mastodon.social replied:}, followed by
-the actual reply content. Similarly, federated Bluesky replies from
-third-party PDS instances sent by the Bluesky bridge account include
-an attribution line with the original author's Bluesky handle, e.g.
-\enquote{alice.bsky.social replied:}, followed by the reply content.
-In both cases, the handle is a clickable link to the original
-profile, allowing users to easily find and follow the original author
-if they wish. Additionally, since Mastodon content is formatted in
-HTML, we need to ensure all content is properly escaped to prevent
-Cross-Site-Scripting (XSS) vulnerabilities.
-
-\section{Inbound Federation}
-
-\subsection{ActivityPub Endpoints}\label{sec:activitypub-endpoints}
+\section{ActivityPub Interface}\label{sec:activitypub-endpoints}
 
 Using Fedify together with its Express HTTP
 integration\footnote{\url{https://fedify.dev/manual/integration\#express}},
-we expose the following ActivityPub endpoints:
+Fedisky exposes the following ActivityPub endpoints. Fedify handles the
+low-level protocol concerns: verifying and signing HTTP requests, and
+managing the message queue and KV store backed by a dedicated SQLite
+database. The application layer registers dispatchers that Fedify
+calls for each activity type or collection lookup, which in turn
+delegate to the appropriate database queries or converter logic.
+
+\subsection{Endpoints}
 
 \begin{itemize}
   \item \ttt{GET /.well-known/webfinger} \\
@@ -614,23 +566,179 @@ we expose the following ActivityPub endpoints:
     compatibility and capabilities of the Fedisky bridge.
 \end{itemize}
 
-\subsection{Inbox Processing}
-
-\subsection{Reply Bridging}
-
-\subsection{Post Mapping for Reply Threading}
-
-\subsection{Engagement Notifications}
-
 \section{Conversion Layer}\label{sec:conversion-layer}
+
+The conversion layer provides bidirectional translation between
+ATProto records and ActivityPub objects. A
+\ttt{RecordConverterRegistry} maps ATProto collection identifiers
+(e.g. \ttt{app.bsky.feed.post}) to converter instances implementing a
+common \ttt{RecordConverter} interface. Each converter exposes two
+methods: \ttt{toActivityPub}, which transforms an ATProto record into
+an ActivityPub activity and/or object, and \ttt{toRecord}, which
+performs the inverse transformation. The registry is populated at
+startup with converters for the three bridged collection types:
+posts, likes, and reposts.
 
 \subsection{Post Converter}
 
-\subsection{HTML \texorpdfstring{$\leftrightarrow$}{<->} Rich Text}
+The post converter handles the \ttt{app.bsky.feed.post} collection
+and is the most involved of the three converters, as it must handle
+bidirectional conversion including rich text, media, reply threading,
+mentions, and content warnings.
 
-\subsection{Media Handling}
+\subsubsection{Outbound (ATProto to ActivityPub)}
 
-\subsection{Edge Cases}
+The \ttt{toActivityPub} method receives an ATProto post record and
+constructs a \ttt{Create(Note)} activity. The note's ID is derived
+from the ATProto URI, and its \ttt{to} field is set to the
+ActivityPub public collection to make the post visible to all
+Fediverse users. The author's followers URI is included in the
+\ttt{cc} field to ensure delivery.
+
+If the post is a reply, the converter queries the database for the
+parent post's ActivityPub mapping. If a mapping exists (i.e. the
+parent was originally an ActivityPub note bridged onto the PDS), the
+original ActivityPub note ID is used as the \ttt{inReplyTo} value,
+preserving the correct reply threading on the Fediverse side.
+Otherwise, the converter constructs an ActivityPub object URI from
+the ATProto parent URI.
+
+The post's plain text is converted to HTML by splitting on double
+newlines to produce \ttt{<p>} elements, with all content escaped
+using the \ttt{escape-html} NPM
+package\footnote{\url{https://www.npmjs.com/package/escape-html}} to
+prevent Cross-Site Scripting (XSS) vulnerabilities.
+
+\subsubsection{Inbound (ActivityPub to ATProto)}
+
+The \ttt{toRecord} method receives an ActivityPub note object and
+transforms it into an \ttt{app.bsky.feed.post} record. The HTML
+content is pared in to plain text using the \ttt{html-to-text} NPM
+package\footnote{\url{https://www.npmjs.com/package/html-to-text}}
+(see \autoref{sec:html-richtext} below), and the resulting text is
+truncated to 3000 bytes if necessary to respect Bluesky's post size
+limits \cite{blueskysocialpbcAppbskyfeedpostLexicon}. If the note
+includes attachments, they are downloaded and uploaded to the PDS as
+blobs (see \autoref{sec:media-handling}). If the note specifies a
+\ttt{replyTarget}, the converter parses the ATProto URI from the
+ActivityPub URL to construct the reply reference. A record key is
+generated using ATProto's TID (timestamp-based identifier) scheme,
+and the record's CID is computed using Lexicon CBOR hashing.
+
+\subsection{Like and Repost Converters}
+
+The like and repost converts handle the \ttt{app.bsky.feed.like} and
+\ttt{app.bsky.feed.repost} collections respectively. Both converters
+are outbound-only: they implement \ttt{toActivityPub} but return null
+from \ttt{toRecord}, since incoming likes and reposts from the
+Fediverse are handled directly by the inbox handlers rather than
+through the conversion layer.
+
+The like converter transforms an ATProto like record into an
+ActivityPub \ttt{Like} activity, while the repost converter produces
+an \ttt{Announce} activity. Both converters first check whether the
+subject post belongs to a local PDS user using the \ttt{isLocalUser}
+utility, which queries the PDS for the account. If the subject post
+is from an external PDS, the activity is discarded to avoid
+generating engagement notification for posts that are not managed by
+this Fedisky instance.
+
+\subsection{HTML \texorpdfstring{$\leftrightarrow$}{<->} Rich
+Text}\label{sec:html-richtext}
+
+ATProto and ActivityPub use fundamentally different text
+representations. ATProto store post content as plain text with
+separate annotations called \emph{facets}, which specify byte ranges
+and their semantic type (link, mention, or tag). ActivityPub, and
+more specifically Mastodon, stores content as HTML with inline anchor
+elements for links and mentions.
+When converting ATProto posts to ActivityPub notes, the converter
+splits the plain text on double newlines and wraps each paragraph in
+\ttt{<p>} tags. All text content is HTML-escaped to prevent injection
+of arbitrary markup.
+
+The inverse conversion uses the \ttt{html-to-text} library with a
+custom \ttt{anchorCollector} formatter. This formatter walks the HTML
+DOM tree and, for each anchor element, extracts both the visible text
+content and the \ttt{href} URL. It alson inspects the element's CSS
+classes: Mastodon marks mention links with the \ttt{mention} class,
+which allows the converter to distinguish mentions from regular
+hyperlinks. Elements with the \ttt{invisible} class (used by Mastodon
+to hide portions of long URLs for display purposes) are skipped
+during text extraction to produce clean output. The extracted links
+are collected separately and used in a subsequent step to reconstruct
+ATProto facets.
+
+After HTML parsing, the converter reconstructs ATProto facets from
+the collected links. For regular hyperlinks, it locates the link's
+visible text within the plain text output using positional search,
+the computes the UTF-8 byte offsets required by ATProto's facet index
+format. For mention links, the converter extracts the DID from the
+ActivityPub actor URL (which follows the pattern
+\ttt{/users/\{did\}}), verifies that the mentioned user is local to
+the PDS, and constructs a mention facet with the resolved DID.
+
+If the ActivityPub note specifies a language via the
+\ttt{LanguageString} type, the converter extracts it and includes it
+in the ATProto record's \ttt{lanfs} array, preserving language
+information across the bridge.
+
+\subsection{Media Handling}\label{sec:media-handling}
+
+\subsubsection{Outbound}
+
+When an ATProto post contains embedded images or video, the converter
+constructs ActivityPub \ttt{Document} attachments by building blob
+URLs using the PDS's \ttt{com.atproto.sync.getBlob} endpoint. Each
+attachment includes the blob's MIME type and alt text. The converter
+supports both the \ttt{app.bsky.embed.images} type and the
+\ttt{app.bsky.embed.video} type.
+
+\subsubsection{Inbound}
+
+For incoming ActivityPub notes with attachments, the converter
+downloads each remote media file and uploads it to the PDS as a blob.
+The blob handler enforces several security and resource constraints:
+it validates that URLs use HTTP or HTTPS and rejects private IP
+addresses (RFC 1918 ranges, localhost, and link-local addresses) to
+prevent Server-Side Request Forgery (SSRF) attacks. Downloads are
+subject to a 30-second timeout and a 10\,MB size limit, enforced both
+via the \ttt{Content-Length} header and by checking the actual
+downloaded data size. The downloaded blobs are then classified by
+MIME type: image blobs are mapped to \ttt{app.bsky.embed.images}
+(limited to four images, matching Bluesky's constraint), while video
+blobs are mapped to \ttt{app.bsky.embed.video} (limited to a single
+video) \cite{blueskysocialpbcAppbskyfeedpostLexicon,
+  blueskysocialpbcAppbskyembedimagesLexicon,
+blueskysocialpbcAppbskyembedvideoLexicon}.
+
+\subsection{Content Warning and Label Mapping}
+
+ATProto and ActivityPub represent content sensitivity differently.
+ATProto uses \emph{self-labels}, machine-readable string identifiers
+such as \ttt{porn}, \ttt{sexual}, \ttt{nudity}, and
+\ttt{graphic-media} that moderation systems use to filter or blur
+content \cite{LabelsModerationBluesky}. ActivityPub uses a boolean
+\ttt{as:sensitive} flag and a free-text \ttt{summary} field that
+Mastodon displays as a content warning
+\cite{ActivityPubMastodonDocumentation2025}.
+
+When an ATProto post carries self-labels, the converter maps each
+recognized label to a human-readable description (e.g. \ttt{porn}
+becomes \enquote{Adult Content (Porn)}). The descriptions are joined
+into a comma-separated string and set as the note's \ttt{summary},
+with the \ttt{as:sensitive} flag set to true. This allows Mastodon to
+display an appropriate content warning and give users the option to
+view the content if they choose.
+
+In the reverse direction, the converter scans the content warning
+text for keywords using regular expressions (e.g. matching
+  \enquote{nsfw}, \enquote{adult content}, or \enquote{explicit} to the
+\ttt{sexual} label). If the \ttt{as:sensitive} flag is set but no
+keywords match, the converter defaults to the \ttt{sexual} label as a
+general-purpose fallback. The matched labels are assembled into an
+ATProto structure with the \ttt{com.atproto.label.defs\#selfLabel}
+type and attached to the post record.
 
 \section{Observability \& Operations}
 
