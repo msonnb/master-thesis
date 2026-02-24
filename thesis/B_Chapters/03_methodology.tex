@@ -73,6 +73,142 @@ information.
 
 \subsection{Subsystems}
 
+Fedisky is structured around a set of loosely coupled subsystems,
+each responsible for a distinct concern. These subsystems are wired
+together at startup through a shared dependency injection container,
+\ttt{AppContext}, which holds references to all major services: the
+database, the PDS and AppView clients, the two bridge account
+managers, the Fedify federation instance, and the logger. The main
+service class, \ttt{APFederationService}, acts as the top-level
+orchestrator: it initializes the database, provisions the bridge
+accounts, starts the HTTP server, and conditionally launches the
+three background processors described below.
+
+\subsubsection{PDS and AppView Clients}
+
+The \ttt{PDSClient} and \ttt{AppViewClient} modules provide thin
+wrappers around the ATProto XRPC APIs. The PDS client is used for all
+write operations and local record lookups as well as identity
+resolution and blob retrieval. The AppView client is used exclusively
+for read operations against the Bluesky AppView, such as fetching
+posts from users on external PDS instances that are not accessible
+through the local PDS. Separating the two clients reflects the
+architectural distinction in AT Protocol between the PDS as the
+authoritative data store and the AppView as a read-optimized aggregation layer.
+
+\subsubsection{Firehose Processor}
+
+The \ttt{FirehoseProcessor} subscribes to the PDS's
+\ttt{com.atproto.sync.subscribeRepos} WebSocket endpoint and drives
+the outbound federation pipeline. Each incoming frame is decoded from
+its CBOR binary encoding and parsed into a structured commit event
+containing the repository DID, a sequence number, and a list of
+operations. The processor filters operations to only those affecting
+collections for which a converter is registered, and skips events
+originating from the bridge accounts to prevent bridging loops. For
+create operations, it fetches the complete record from the PDS,
+converts it into an ActivityPub activity using the converter
+registry, and dispatches it to followers via Fedify. For delete
+operations, it constructs the corresponding \ttt{Delete} or
+\ttt{Undo} activity and dispatches it similarly. The processor also
+add newly created local posts to the \ttt{ap\_monitored\_post} table
+for later processing by the Constellation processor. On connection
+loss, the processor waits five seconds before automatically reconnecting.
+
+\subsubsection{Federation Layer}
+
+The federation layer is implemented using Fedify as exposed via an
+Express HTTP integration. It registers the WebFinger, actor, inbox,
+outbox, followers, following, and NodeInfo endpoints described in
+\autoref{sec:activitypub-endpoints}. Fedify handles the low-level
+ActivityPub protocol concerns: verifying and signing HTTP requests,
+and managing the message queue and KV store backed by a dedicated
+SQLite database. The application layer registers dispatchers that
+Fedify calls for each activity type or collection lookup, which in
+turn delegate to the appropriate database queries or converter logic.
+
+\subsubsection{Inbox Handlers}
+
+The inbox module registers Fedify listeners for each supported
+inbound activity type: \ttt{Follow}, \ttt{Undo}, \ttt{Delete},
+\ttt{Like}, \ttt{Announce}, and \ttt{Create}. Each handler performs
+the relevant database mutation and, in case of  \ttt{Follow},
+dispatches an \ttt{Accept} response. The \ttt{Create(Note)} handler
+additionally invokes the post converter to produce an ATProto record
+and write it to the PDS via the Mastodon bridge account, as described
+in \autoref{sec:core-inbound-federation}.
+
+\subsubsection{Conversion Layer}
+
+The conversion layer provides bidirectional translation between
+ATProto records and ActivityPub objects. A
+\ttt{RecordConverterRegistry} maps ATProto collection identifiers to
+a converter instance implementing a common interface with
+\ttt{toActivityPub} and \ttt{toRecord} methods. The post converter is
+the most complex: in the outbound direction it transforms ATProto
+facets into ActivityPub \ttt{Mention} tags, embeds media attachments,
+converts self-labels into content warnings, and constructs the
+correct \ttt{inReplyTo} chain. In the inbound direction it parses the
+HTML content of an ActivityPub \ttt{Note}, reconstructs ATProto
+facets, and prepends the attribution line. Supporting utilities
+handle blob downloading and upload, HTML parsing, and label mapping.
+A more detailed explanation of the conversion logic can be found in
+\autoref{sec:conversion-layer}.
+
+\subsubsection{Bridge Account System}
+The two bridge accounts are managed by the
+\ttt{MastodonBridgeAccountManager} and
+\ttt{BlueskyBridgeAccountManager}, both subclassing an abstract
+\ttt{BridgeAccountManager}. On startup, each manager checks the
+database for stored credentials. If found, it attempts to refresh the
+session, falling back to a password login if the refresh token is
+expired. If no account record exists, it creates a new PDS account
+using the configured handle and a random password. Once initialized,
+each manager exposes the account's DID and a valid access token for
+use in XRPC calls. The Mastodon bridge account is hidden from
+ActivityPub discovery, while the Bluesky bridge account is exposed as
+a regular actor.
+
+\subsubsection{Constellation Processor}
+
+The \ttt{ConstellationProcessor} runs as a periodic background job,
+polling at a configurable interval (default 60 seconds). On each run,
+it fetches a batch of up to 50 entries from the
+\ttt{ap\_monitored\_post} table, which tracks local posts that have
+been bridged to the Fediverse and may have received replies from
+users on other PDS instances. For each post, it queries the
+Constellation API for backlinks of type
+\ttt{app.bsky.feed.post\:reply.parent.uri}, which identifies posts on
+external PDS instances that reply to the monitored post. Each
+discovered reply is checked against the \ttt{ap\_external\_reply}
+deduplication table. New replies are fetched from the AppView,
+converted into \ttt{Create(Note)} activities attributed to the
+Bluesky bridge account, and delivered to the original post author's
+followers via Fedify. The \ttt{ap\_external\_reply} record is then
+created and the monitored post's \ttt{lastChecked} timestamp is updated.
+
+\subsubsection{DM Notification Processor}
+
+The \ttt{DMNotificationProcessor} polls the database at a
+configurable interval (default 5 minutes) for likes and reposts that
+have not yet triggered a notification and whose timestamp is older
+than a configurable batch delay (default 10 minutes), ensuring that a
+burst of engagements on a single post results in a single summary
+message rather than individual notifications. Engagements are grouped
+by post author and then by post, and a summary direct message is sent
+to each author via the Bluesky Chat API using the Mastodon bridge
+account as the sender. The message includes the display names of the
+engaging Fediverse actors, resolved by fetching their ActivityPub
+profiles, and a truncated excerpt of the post content.
+
+\subsubsection{Database Layer}
+
+All persistent state is stored in a SQLite database through Kysely. A
+second SQLite database is used exclusively  by Fedify for its
+internal KV store and message queue. Schema changes are manged
+through numbered migration files, each exporting \ttt{up()} and
+\ttt{down()} functions, which are applied automatically on service startup.
+
 \section{Core Flows}
 
 \subsection{Actor and Identity Discovery}
@@ -216,7 +352,8 @@ delivered to all followers using the same inbox delivery mechanism as
 create operations, ensuring that federated instances are notified of
 the deletion.
 
-\subsection{Inbound: ActivityPub Activity to ATProto Record}
+\subsection{Inbound: ActivityPub Activity to ATProto
+Record}\label{sec:core-inbound-federation}
 
 \begin{figure}
   \centering
@@ -225,6 +362,85 @@ the deletion.
   to ATProto record conversion flow.}
   \label{fig:inbound}
 \end{figure}
+
+\autoref{fig:inound} shows the inbound flow for incoming ActivityPub
+activities. All incoming activities from the Fediverse are delivered
+to Fedisky's
+inbox endpoints by the remote ActivityPub instance. Fedify first
+verifies the HTTP signature on each request and fetches the sending
+actor from the network before dispatching the activity to the
+appropriate handler. The handling logic then branches based on the
+activity type as follows:
+
+\subsubsection{Follow}
+
+When Fedisky receives a \ttt{Follow} activity, it validates the
+activity's required fields (identifier, actor, and object), then
+parses the object URI to extract the target user's DID.
+The follow relationship is persisted to the database, recording the
+follower's actor URI and their personal and shared inbox URLs for
+later use during activity delivery. Fedisky then sends an
+\ttt{Accept(Follow)} activity back to the actor's inbox, completing
+the handshake and activating the follow relationship on the remote instance.
+
+\subsubsection{Undo(Follow), Undo(Like), Undo(Announce)}
+
+These three undo variants are handled symmetrically. Fedisky locates
+the original record in the database by actor URI or activity ID, and
+removes it. No further action is required on the PDS.
+
+\subsubsection{Delete(Actor)}
+
+When an actor deletion is received, Fedisky performs a full cleanup
+of all data associated with that actor. It removes all follow, like,
+and repost records from the database. It then queries the database
+for all post mappings belonging to that actor, iterating over each
+bridged post and issuing a \ttt{com.atproto.repo.deleteRecord} call
+via the bridge account client to remove the corresponding ATProto
+record from the PDS. Finally, all remaining post mappings for the
+actor are removed from the database.
+
+\subsubsection{Delete(Note)}
+
+For individual note deletions, Fedisky looks up the post mapping by
+the ActivityPub note ID to retrieve the corresponding ATProto
+collection and record key. If a mapping is found, Fedisky issues a
+\ttt{com.atproto.repo.deleteRecord} call to the PDS to remove the
+record, then removes the post mapping entry from the database.
+
+\subsubsection{Like and Announce}
+
+When a \ttt{Like} or \ttt{Announce} activity is received, Fedisky
+parses the object URI to determine the target post's ATProto URI and
+the author's DID. It then queries the PDS to verify that an account
+with that DID is local to the PDS, discarding the activity if not. If
+the post is confirmed to be local, the engagement is stored in the
+database in the respective \ttt{ap\_like} or \ttt{ap\_repost} table,
+recording the activity ID, post URI, and actor URI.
+
+\subsubsection{Create(Note)}
+
+The most involved inbound case handles incoming Fediverse replies to
+posts that were originally bridged onto the PDS by the Mastodon
+bridge account. Fedisky first validates the reply target and extracts
+the parent post's ATProto URI from the path. It then fetches the
+account for the post's author and retrieves the full parent post
+record form the PDS using the \ttt{com.atproto.repo.getRecord} API,
+obtaining the record's CID required for correct reply threading.
+Next, Fedisky fetches the remote actor's profile and constructs an
+attribution prefix in HTML (e.g. \enquote{@bob@mastodon.social
+replied:}) to be prepended to the post content. The \ttt{Note} is
+then passed to the post converter, which transforms it into an
+ATPRoto \ttt{app.bsky.feed.post} record. After conversion, Fedisky
+sets the reply references (\ttt{root} and \ttt{parent}), resolving
+the CIDs of both the root and parent records so that the reply is
+correctly threaded in the Bluesky client. The record is then written
+to the PDS via the \ttt{com.atproto.repo.putRecord} API using the
+bridge account client, which returns the new record's URI and CID.
+Finally, Fedisky stores a post mapping in the database, recording the
+ATProto URI, the original ActivityPub note ID, the actor URI, and the
+actor's inbox URL, enabling future operations such as deletions to
+locate the bridged post.
 
 \section{Data Model}
 
@@ -332,7 +548,7 @@ Cross-Site-Scripting (XSS) vulnerabilities.
 
 \section{Inbound Federation}
 
-\subsection{ActivityPub Endpoints}
+\subsection{ActivityPub Endpoints}\label{sec:activitypub-endpoints}
 
 Using Fedify together with its Express HTTP
 integration\footnote{\url{https://fedify.dev/manual/integration\#express}},
