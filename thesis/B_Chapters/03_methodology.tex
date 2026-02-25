@@ -744,10 +744,162 @@ type and attached to the post record.
 
 \subsection{Wide Events Logging}
 
+Fedisky implements the \emph{wide events} pattern, where each request
+or background operation emits a single, context-rich structured log
+event at completion rather than scattering multiple log statements
+throughout the code path. This pattern enables powerful debugging and
+analytics because all relevant context for a given operation is
+contained in one log line, making it straightforward to filter,
+search, and correlate events
+\cite{burmistrovAllYouNeed2024,majorsObservabilityEngineeringAchieving2022}.
+% TODO: add ch. 5 to majors book reference
+
+The implementation centers on the \ttt{WideEvent} class, a builder
+that accumulates key-value pairs over the lifetime of an operation.
+It supports dot-notation for nested fields (e.g. \ttt{actor.did},
+\ttt{activity.type}), dedicated methods for attaching user context
+(\ttt{setUser}), error information (\ttt{setError}), and outcome
+classification (\ttt{setOutcome}, which accepts \ttt{success},
+\ttt{error}, or \ttt{ignored}). Each event automatically records a
+timestamp at creation and computes the operation's duration at
+emission time. Environment metadata such as the service name, package
+version, Git commit hash, and Node.js version is captured once at
+startup and included in every event, ensuring that log lines can be
+correlated with specific deployments.
+
+For HTTP request, an Express middleware creates a \ttt{WideEvent} of
+type \ttt{http\_request} at the start of each request, population it
+with the HTTP method, path, user agent, and remote address. A request
+ID is extracted from standard tracing headers (\ttt{X-Request-Id},
+\ttt{X-Correlation-Id}, \ttt{X-Trace-Id}, \ttt{Traceparen}), or
+generated as a UUID
+if none is present. The event is then made available to all
+downstream handlers and middleware through Node.js's
+\ttt{AsyncLocalStorage}, which propagates the event through the
+entire asynchronous call chain without requiring explicit parameter
+passing. Any handler in the request chain can retrieve the current
+event via \ttt{getWideEvent()} and enrich it with domain-specific
+fields. When the response finishes, the middleware automatically sets
+the HTTP status code and outcome, and emits the event. For background
+operations such as firehose message processing, events are created
+directly using \ttt{createWideEvent()}, enriched throughout the
+operation, and explicitly emitted upon completion.
+
+Fedisky uses LogTape\footnote{\url{https://logtape.org/}} as its
+logging framework, configured with two sinks: a console sink for
+local development, and an OpenTelemetry sink that exports structured
+logs to an observability backend. The OpenTelemetry integration is
+activtated by importing the OpenTelemetry auto-instrumentation script
+at startup, which enables automatic instrumentation of HTTP requests,
+database calls, and other supported libraries like Fedify without
+code changes. This allows operators to connect Fedisky to any
+OpenTelemetry-compatible backend for distributed tracing and log aggregation.
+
+\subsection{HTTP Security}
+
+Fedisky applies several HTTP-level security measures. The
+\ttt{helmet}\footnote{\url{https://www.npmjs.com/package/helmet}}
+middleware sets security-related HTTP headers (such as
+  \ttt{X-Content-Type-Options}, \ttt{Strict-Transport-Security}, and
+\ttt{Content-Security-Policy}) to mitigate common web
+vulnerabilities. Request body size is limited to 256\,KB to prevent
+denial-of-service through oversized payloads. Two rate limiters are
+applied: a general limiter allowing 1000 requests per 15-minute
+windo, and a stricter inbox-specific limiter allowing 100 requests
+per minute per IP address, since the inbox endpoints are the primary
+target for unsolicited traffic from the Fediverse. Rate limit headers
+allow clients to inspect their remaining quota.
+
 \subsection{Testing}
 
 \subsubsection{Unit Tests}
 
+The unit test suite uses Vitest\footnote{\url{https://vitest.dev}} as
+the test runner and covers the core logic modules of the system: the
+conversion layer (post, like, and repost converters), the wide events
+logging system, the database layer, the firehose processor, the
+federation inbox handler, and the DM notification system. Tests are
+co-located with their source code in \ttt{tests/} subdirectories
+within each module. the conversion tests verify bidirectional
+translation correctness---for example, that an ATProto post with
+facets, embeds, and content labels is correctly converted to an
+ActivityPub note and back.
+
 \subsubsection{End-to-End Tests}
 
+The end-to-end test suite validates complete federation flows across
+service boundaries. The test environment is orchestrated by a shell
+script that provisions the following infrastructure:
+
+\begin{itemize}
+  \item A real ATProto PDS instance running in Docker, configured
+    with a test hostname (\ttt{bsky.test}).
+  \item A Caddy reverse proxy providing TLS termination with
+    locally-trusted certificates, since ActivityPub requires HTTPS
+    for HTTP signatures and actor resolution.
+  \item A mock ActivityPub server that simulates a Mastodon instance
+    (\ttt{mastodon.test}), capable of sending and receiving
+    ActivityPub activities and exposing an API for test assertions.
+  \item A mock Constellation server that simulates the external reply
+    discovery service.
+  \item A native Fedisky instance connected to the PDS and configured
+    with an in-memory database.
+\end{itemize}
+
+The test suite covers four categories of federation flows: actor
+discovers (WebFinger resolution and ActivityPub actor retrieval),
+follow federation (follow request delivery and acceptance), post
+federation (outbound post delivery to followers via the firehose
+pipeline), and Constellation-based external reply federation. Each
+test creates fresh PDS accounts, establishes follows between mock
+ActivityPub users and PDS users, performs actions (such as creating
+posts), and then asserts that the expected ActivityPub activities
+were delivered to the mock server. Tests use polling with timeouts to
+account for the asynchronous nature of the system, where activities
+flow through the firehose, conversion laye, and HTTP delivery
+pipeline before arriving at the remote server.
+
 \subsection{Deployment}
+
+Fedisky is packaged as a multi-architecture Docker image (AMD64 and
+ARM64) and published to the GitHub Container Registry. The CI/CD
+pipeline, implemented as a GitHub Actions workflow, builds and pushes
+the image on pushes to the \ttt{release} branch or on version tags.
+Images are tagged with the semantic version, the major.minor version,
+the full Git SHA, and \ttt{latest}.
+
+The production container image uses a multi-stage build: a build
+stage compiles TypeScript and installs dependencies, and a production
+stages copies only the compiled output and production dependencies,
+reducing the final image size. The entrypoint used
+\ttt{dumb-init}\footnote{\url{https://github.com/Yelp/dumb-init}} to
+handle signal forwarding and prevent zombie processes.
+
+The entrypoint script registers a \ttt{SIGTERM} handler that calls
+the service's \ttt{destroy()} method, which performs an ordered
+shutdown: the firehose processor, Constellation processor, and DM
+notification processor are stopped first, then the HTTP server is
+terminated using
+\ttt{http-terminator}\footnote{\url{https://www.npmjs.com/package/http-terminator}}
+to allow in-flight requests to complete, and finally the database
+connection is closed. This ensures that no requests are dropped, and
+no data is lost during container restarts or rolling deployments.
+
+An installer shell script automates the deployment of Fedisky
+alongside an existing PDS installation. The script reads the PDS's
+existing configuration (hostname, admin credentials), prompts the
+operator for ActivityPub-specific settings (hostname, bridge account
+preferences), and generates the environment configuration, Caddy
+reverse proxy rules, Docker Compose service definition, and
+\ttt{systemd} unit file. The Caddy configuration uses path-based
+routing to direct ActivityPub-specific paths (such as \ttt{/users/*},
+\ttt{/inbox}, and \ttt{/.well-known/webfinger}) to the Fedisky
+container while forwarding all other traffic to the PDS. Requests
+with an \ttt{Accept: application/activity+json} header are also
+routed to Fedisky, enabled content negotiation on shared paths. A
+companion updater script handles upgrades by pulling the latest
+image, backing up the configuration, performing a rolling restart of
+the Fedisky container, and cleaning up old Docker images. The Docker
+Compose configuration declares a health dependency between the
+Fedisky and PDS containers, ensuring that Fedisky only starts after
+the PDS's health check passes.
