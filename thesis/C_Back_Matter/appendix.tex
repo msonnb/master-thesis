@@ -1,4 +1,45 @@
 \chapter{Appendix}
 
-here you can put further things you want to add like transcripts,
-questionnaires, raw data...
+\section{Fedisky Environment Variables}\label{sec:appendix-env-vars}
+
+\autoref{tab:env-vars} lists all environment variables supported by
+Fedisky. Variables marked as required must be set for the service to
+start; all others have default values as specified.
+
+\begin{table}[ht]
+  \centering
+  \begin{tabularx}{\textwidth}{X l l}
+    \toprule
+    \textbf{Variable} & \textbf{Type} & \textbf{Default} \\
+    \midrule
+    \ttt{PDS\_URL} & String & \textbf{Required} \\
+    \ttt{PDS\_HOSTNAME} & String & \textbf{Required} \\
+    \ttt{PDS\_ADMIN\_TOKEN} & String & \textbf{Required} \\
+    \ttt{AP\_PORT} & Integer & \ttt{2588} \\
+    \ttt{AP\_HOSTNAME} & String & \ttt{localhost} \\
+    \ttt{AP\_PUBLIC\_URL} & String & Derived from hostname \\
+    \ttt{AP\_VERSION} & String & \ttt{0.0.0} \\
+    \ttt{AP\_DB\_LOCATION} & String & \ttt{:memory:} \\
+    \ttt{AP\_FIREHOSE\_ENABLED} & Boolean & \ttt{true} \\
+    \ttt{AP\_FIREHOSE\_CURSOR} & String & -- \\
+    \ttt{AP\_MASTODON\_BRIDGE\_ENABLED} & Boolean & \ttt{true} \\
+    \ttt{AP\_MASTODON\_BRIDGE\_HANDLE} & String & \ttt{mastodon.\{hostname\}} \\
+    \ttt{AP\_MASTODON\_BRIDGE\_DISPLAY\_NAME} & String & Mastodon Bridge \\
+    \ttt{AP\_MASTODON\_BRIDGE\_DESCRIPTION} & String & See source \\
+    \ttt{AP\_MASTODON\_BRIDGE\_AVATAR\_URL} & String & Mastodon logo URL \\
+    \ttt{AP\_BLUESKY\_BRIDGE\_ENABLED} & Boolean & \ttt{true} \\
+    \ttt{AP\_BLUESKY\_BRIDGE\_HANDLE} & String & \ttt{bluesky.\{hostname\}} \\
+    \ttt{AP\_BLUESKY\_BRIDGE\_DISPLAY\_NAME} & String & Bluesky Bridge \\
+    \ttt{AP\_BLUESKY\_BRIDGE\_DESCRIPTION} & String & See source \\
+    \ttt{AP\_BLUESKY\_BRIDGE\_AVATAR\_URL} & String & Bluesky logo URL \\
+    \ttt{AP\_CONSTELLATION\_URL} & String & Empty (disabled) \\
+    \ttt{AP\_CONSTELLATION\_POLL\_INTERVAL} & Integer & \ttt{60000} \\
+    \ttt{AP\_APPVIEW\_URL} & String & \ttt{public.api.bsky.app} \\
+    \ttt{AP\_DM\_NOTIFICATIONS\_ENABLED} & Boolean & \ttt{true} \\
+    \ttt{AP\_DM\_NOTIFICATIONS\_POLL\_INTERVAL} & Integer & \ttt{300000} \\
+    \ttt{AP\_DM\_NOTIFICATIONS\_BATCH\_DELAY} & Integer & \ttt{600000} \\
+    \ttt{AP\_ALLOW\_PRIVATE\_ADDRESS} & Boolean & \ttt{false} \\
+    \bottomrule
+  \end{tabularx}
+  \caption{Fedisky environment variables.}\label{tab:env-vars}
+\end{table}

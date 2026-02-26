@@ -1,4 +1,4 @@
-\chapter{Fedisky -- An ActivityPub Federation Sidecar for Bluesky PDS}
+\chapter{Design and Implementation}
 
 Fedisky is a sidecar service that a Bluesky PDS operator can deploy
 alongside their PDS to enable federation with the Fediverse. It acts
@@ -14,6 +14,29 @@ Fedisky's source code is available on GitHub at
 \url{https://github.com/msonnb/fedisky}.
 
 \section{Overview}
+
+\subsection{Technical Challenges}
+
+Bridging ATProto and ActivityPub requires reconciling several
+fundamental incompatibilities between the two protocols. First, their
+\emph{identity models} differ: ATProto identifies users by DIDs and
+resolves handles through DNS, while ActivityPub identifies actors by
+HTTPS URIs discovered via WebFinger. Fedisky must map between these
+two identity systems bidirectionally. Second, their \emph{content
+representations} diverge: ATProto stores posts in plain text with
+byte-range annotations (facets) for links and mentions, while
+ActivityPub transmits content as HTML. Third, their \emph{delivery
+mechanisms} are fundamentally different: ATProto uses a pull-based
+model where consumers subscribe to a firehose of commits and fetch
+records as needed, while ActivityPub uses a push-based model where
+the origin server delivers activities to each follower's inbox.
+Finally, \emph{engagement semantics} differ: ATProto records likes
+and reposts as repository records visible to the author through the
+AppView, while ActivityPub delivers them as transient activities to
+the target actor's inbox. Fedisky must bridge each of these gaps
+while remaining transparent to both sides---Bluesky users should not
+need to take any action, and Mastodon users should be able to
+interact with bridged accounts as if they were native ActivityPub actors.
 
 \subsection{System Context}
 
@@ -83,6 +106,37 @@ service class, \ttt{APFederationService}, acts as the top-level
 orchestrator: it initializes the database, provisions the bridge
 accounts, starts the HTTP server, and conditionally launches the
 background processors.
+
+\subsection{Configuration}
+
+Fedisky uses a two-tier configuration system. The \ttt{readEnv()}
+function reads raw values from environment variables, and
+\ttt{envToConfig()} transforms them into a strongly typed
+\ttt{APFederationConfig} object, applying defaults where values are
+not provides. Only three variables are required, the PDS URL, PDS
+hostname, and PDS admin token. All other setting have sensible
+defaults derived from these.
+
+The public URL is inferred from the hostname: if the hostname is
+\ttt{localhost}, the URL uses HTTP with the configured port;
+otherwise, it constructs an HTTPS URL, reflection the assumption that
+production deployments will use TLS. Bridge account handles default
+to \ttt{mastodon.\{hostname\}} and \ttt{bluesky.\{hostname\}}, and
+their email addresses are generated as
+\ttt{noreply+\{handle\}@\{hostname\}}, since the PDS requires a
+unique email for each account. Background processors are enabled by
+default and their poll intervals are configurable. The Constellation
+processor defaults to 60 seconds, the DM notification processor to 5
+minutes with a 10-minute batch delay. The database location defaults
+to an in-memory SQLite database, which is useful for testing but must
+be overriden with a file path for production use.
+
+An \ttt{allowPrivateAddress} flag, disabled by default, permits
+Fedify to fetch resources from private IP ranges. This is necessary
+for the end-to-end test environment, where all services run on local
+addresses, but must remain disabled in production to prevent SSRF
+attacks. A complete list of all supported environment variables and
+their defaults is provided in \autoref{sec:appendix-env-vars}.
 
 \subsection{PDS and AppView Clients}
 
@@ -199,7 +253,7 @@ through numbered migration files, each exporting \ttt{up()} and
 \begin{itemize}
   \item \ttt{ap\_like} and \ttt{ap\_repost} -- Stores incoming
     ActivityPub \ttt{Like} and \ttt{Announce} activities targeting
-    local posts. The tables main purpose are to track engagements for
+    local posts. The tables' main purpose are to track engagements for
     display (e.g. showing like counts) and batching engagement for DM
     notifications.
 \end{itemize}
@@ -303,7 +357,7 @@ then query the actor endpoint to fetch the user's actor document,
 which includes the user's profile information, public keys, and inbox
 URLs. The object conforms to the Activity Vocabulary \ttt{Person}
 type as defined in \cite{snellActivityVocabulary2017}. To construct
-the actor document, Fedisky fetches the user's profile record form
+the actor document, Fedisky fetches the user's profile record from
 the PDS using the \ttt{com.atproto.repo.getRecord} API. From the
 profile record, Fedisky extracts the user's display name,
 description, as well as avatar and banner images. Finally, Fedisky
@@ -476,13 +530,13 @@ posts that were originally bridged onto the PDS by the Mastodon
 bridge account. Fedisky first validates the reply target and extracts
 the parent post's ATProto URI from the path. It then fetches the
 account for the post's author and retrieves the full parent post
-record form the PDS using the \ttt{com.atproto.repo.getRecord} API,
+record from the PDS using the \ttt{com.atproto.repo.getRecord} API,
 obtaining the record's CID required for correct reply threading.
 Next, Fedisky fetches the remote actor's profile and constructs an
 attribution prefix in HTML (e.g. \enquote{@bob@mastodon.social
 replied:}) to be prepended to the post content. The \ttt{Note} is
 then passed to the post converter, which transforms it into an
-ATPRoto \ttt{app.bsky.feed.post} record. After conversion, Fedisky
+ATProto \ttt{app.bsky.feed.post} record. After conversion, Fedisky
 sets the reply references (\ttt{root} and \ttt{parent}), resolving
 the CIDs of both the root and parent records so that the reply is
 correctly threaded in the Bluesky client. The record is then written
@@ -566,6 +620,32 @@ delegate to the appropriate database queries or converter logic.
     compatibility and capabilities of the Fedisky bridge.
 \end{itemize}
 
+\subsection{Outbox}
+
+The outbox dispatcher aggregates records from all three bridged
+ATProto collections (posts, likes, and reposts) into a single,
+chronologically ordered ActivityPub outbox collection. For a given
+user, it queries the PDS's \ttt{com.atproto.repo.listRecords} API for
+each collection registered in the converter registry, then merges the
+results into a unified list. To produce a consistent chronological
+ordering across collections, the records are sorted by their record
+key, which in ATProto is a TID (timestamp-based identifier) that
+sorts lexicographically by creation time. The outbox is paginated
+using cursor-based pagination: each page contains up to 50 items, and
+the cursor for the next page is derived from the last record's key.
+An extra record is fetched beyond the page limit to determine whether
+additional pages exist.
+
+Each record in the page is passed to its corresponding converter,
+which transforms it into an ActivityPub activity. Records whose
+conversion fails are filtered from the response, and errors logged
+via the wide events system. A separate object dispatcher handles
+direct lookups of individual posts by their ATProto URI. When a
+Mastodon instance fetches a post URL (e.g.
+\ttt{https://fedisky.social/posts/\{uri\}}), the dispatcher parses
+the ATProto URI from the path, fetches the record from the PDS, and
+returns the converted ActivityPub \ttt{Note} object.
+
 \section{Conversion Layer}\label{sec:conversion-layer}
 
 The conversion layer provides bidirectional translation between
@@ -627,7 +707,7 @@ and the record's CID is computed using Lexicon CBOR hashing.
 
 \subsection{Like and Repost Converters}
 
-The like and repost converts handle the \ttt{app.bsky.feed.like} and
+The like and repost converters handle the \ttt{app.bsky.feed.like} and
 \ttt{app.bsky.feed.repost} collections respectively. Both converters
 are outbound-only: they implement \ttt{toActivityPub} but return null
 from \ttt{toRecord}, since incoming likes and reposts from the
@@ -903,3 +983,15 @@ the Fedisky container, and cleaning up old Docker images. The Docker
 Compose configuration declares a health dependency between the
 Fedisky and PDS containers, ensuring that Fedisky only starts after
 the PDS's health check passes.
+
+\section{Limitations}\label{sec:limitations}
+
+% No Update activity support -- only Create and Delete are handled
+% Reply threading: parseReplyTarget uses parent as both root and
+% parent (root not resolved)
+% LanguageString disabled due to Fedify bug (class mismatch
+% @fedify/vocab vs @fedify/vocab-runtime)
+% Outbound mentions only include local PDS users; mentions of
+% remote/external users are dropped
+% No support for ATProto quote posts (app.bsky.embed.record) -- only
+% plain posts, images, video
