@@ -613,7 +613,7 @@ prevent Cross-Site Scripting (XSS) vulnerabilities.
 
 The \ttt{toRecord} method receives an ActivityPub note object and
 transforms it into an \ttt{app.bsky.feed.post} record. The HTML
-content is pared in to plain text using the \ttt{html-to-text} NPM
+content is parsed in to plain text using the \ttt{html-to-text} NPM
 package\footnote{\url{https://www.npmjs.com/package/html-to-text}}
 (see \autoref{sec:html-richtext} below), and the resulting text is
 truncated to 3000 bytes if necessary to respect Bluesky's post size
@@ -647,7 +647,7 @@ this Fedisky instance.
 Text}\label{sec:html-richtext}
 
 ATProto and ActivityPub use fundamentally different text
-representations. ATProto store post content as plain text with
+representations. ATProto stores post content as plain text with
 separate annotations called \emph{facets}, which specify byte ranges
 and their semantic type (link, mention, or tag). ActivityPub, and
 more specifically Mastodon, stores content as HTML with inline anchor
@@ -660,7 +660,7 @@ of arbitrary markup.
 The inverse conversion uses the \ttt{html-to-text} library with a
 custom \ttt{anchorCollector} formatter. This formatter walks the HTML
 DOM tree and, for each anchor element, extracts both the visible text
-content and the \ttt{href} URL. It alson inspects the element's CSS
+content and the \ttt{href} URL. It also inspects the element's CSS
 classes: Mastodon marks mention links with the \ttt{mention} class,
 which allows the converter to distinguish mentions from regular
 hyperlinks. Elements with the \ttt{invisible} class (used by Mastodon
@@ -672,7 +672,7 @@ ATProto facets.
 After HTML parsing, the converter reconstructs ATProto facets from
 the collected links. For regular hyperlinks, it locates the link's
 visible text within the plain text output using positional search,
-the computes the UTF-8 byte offsets required by ATProto's facet index
+then computes the UTF-8 byte offsets required by ATProto's facet index
 format. For mention links, the converter extracts the DID from the
 ActivityPub actor URL (which follows the pattern
 \ttt{/users/\{did\}}), verifies that the mentioned user is local to
@@ -680,7 +680,7 @@ the PDS, and constructs a mention facet with the resolved DID.
 
 If the ActivityPub note specifies a language via the
 \ttt{LanguageString} type, the converter extracts it and includes it
-in the ATProto record's \ttt{lanfs} array, preserving language
+in the ATProto record's \ttt{langs} array, preserving language
 information across the bridge.
 
 \subsection{Media Handling}\label{sec:media-handling}
@@ -768,10 +768,10 @@ startup and included in every event, ensuring that log lines can be
 correlated with specific deployments.
 
 For HTTP request, an Express middleware creates a \ttt{WideEvent} of
-type \ttt{http\_request} at the start of each request, population it
+type \ttt{http\_request} at the start of each request, populating it
 with the HTTP method, path, user agent, and remote address. A request
 ID is extracted from standard tracing headers (\ttt{X-Request-Id},
-\ttt{X-Correlation-Id}, \ttt{X-Trace-Id}, \ttt{Traceparen}), or
+\ttt{X-Correlation-Id}, \ttt{X-Trace-Id}, \ttt{Traceparent}), or
 generated as a UUID
 if none is present. The event is then made available to all
 downstream handlers and middleware through Node.js's
@@ -789,7 +789,7 @@ Fedisky uses LogTape\footnote{\url{https://logtape.org/}} as its
 logging framework, configured with two sinks: a console sink for
 local development, and an OpenTelemetry sink that exports structured
 logs to an observability backend. The OpenTelemetry integration is
-activtated by importing the OpenTelemetry auto-instrumentation script
+activated by importing the OpenTelemetry auto-instrumentation script
 at startup, which enables automatic instrumentation of HTTP requests,
 database calls, and other supported libraries like Fedify without
 code changes. This allows operators to connect Fedisky to any
@@ -805,7 +805,7 @@ middleware sets security-related HTTP headers (such as
 vulnerabilities. Request body size is limited to 256\,KB to prevent
 denial-of-service through oversized payloads. Two rate limiters are
 applied: a general limiter allowing 1000 requests per 15-minute
-windo, and a stricter inbox-specific limiter allowing 100 requests
+window, and a stricter inbox-specific limiter allowing 100 requests
 per minute per IP address, since the inbox endpoints are the primary
 target for unsolicited traffic from the Fediverse. Rate limit headers
 allow clients to inspect their remaining quota.
@@ -820,7 +820,7 @@ conversion layer (post, like, and repost converters), the wide events
 logging system, the database layer, the firehose processor, the
 federation inbox handler, and the DM notification system. Tests are
 co-located with their source code in \ttt{tests/} subdirectories
-within each module. the conversion tests verify bidirectional
+within each module. The conversion tests verify bidirectional
 translation correctness---for example, that an ATProto post with
 facets, embeds, and content labels is correctly converted to an
 ActivityPub note and back.
@@ -847,7 +847,7 @@ script that provisions the following infrastructure:
 \end{itemize}
 
 The test suite covers four categories of federation flows: actor
-discovers (WebFinger resolution and ActivityPub actor retrieval),
+discovery (WebFinger resolution and ActivityPub actor retrieval),
 follow federation (follow request delivery and acceptance), post
 federation (outbound post delivery to followers via the firehose
 pipeline), and Constellation-based external reply federation. Each
@@ -856,7 +856,7 @@ ActivityPub users and PDS users, performs actions (such as creating
 posts), and then asserts that the expected ActivityPub activities
 were delivered to the mock server. Tests use polling with timeouts to
 account for the asynchronous nature of the system, where activities
-flow through the firehose, conversion laye, and HTTP delivery
+flow through the firehose, conversion layer, and HTTP delivery
 pipeline before arriving at the remote server.
 
 \subsection{Deployment}
@@ -865,13 +865,13 @@ Fedisky is packaged as a multi-architecture Docker image (AMD64 and
 ARM64) and published to the GitHub Container Registry. The CI/CD
 pipeline, implemented as a GitHub Actions workflow, builds and pushes
 the image on pushes to the \ttt{release} branch or on version tags.
-Images are tagged with the semantic version, the major.minor version,
+Images are tagged with the semantic version, the \ttt{major.minor} version,
 the full Git SHA, and \ttt{latest}.
 
 The production container image uses a multi-stage build: a build
 stage compiles TypeScript and installs dependencies, and a production
-stages copies only the compiled output and production dependencies,
-reducing the final image size. The entrypoint used
+stage copies only the compiled output and production dependencies,
+reducing the final image size. The entrypoint uses
 \ttt{dumb-init}\footnote{\url{https://github.com/Yelp/dumb-init}} to
 handle signal forwarding and prevent zombie processes.
 
@@ -896,7 +896,7 @@ routing to direct ActivityPub-specific paths (such as \ttt{/users/*},
 \ttt{/inbox}, and \ttt{/.well-known/webfinger}) to the Fedisky
 container while forwarding all other traffic to the PDS. Requests
 with an \ttt{Accept: application/activity+json} header are also
-routed to Fedisky, enabled content negotiation on shared paths. A
+routed to Fedisky, enabling content negotiation on shared paths. A
 companion updater script handles upgrades by pulling the latest
 image, backing up the configuration, performing a rolling restart of
 the Fedisky container, and cleaning up old Docker images. The Docker
