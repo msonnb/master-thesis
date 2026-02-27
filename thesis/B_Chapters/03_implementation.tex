@@ -113,13 +113,13 @@ Fedisky uses a two-tier configuration system. The \ttt{readEnv()}
 function reads raw values from environment variables, and
 \ttt{envToConfig()} transforms them into a strongly typed
 \ttt{APFederationConfig} object, applying defaults where values are
-not provides. Only three variables are required, the PDS URL, PDS
-hostname, and PDS admin token. All other setting have sensible
+not provided. Only three variables are required, the PDS URL, PDS
+hostname, and PDS admin token. All other settings have sensible
 defaults derived from these.
 
 The public URL is inferred from the hostname: if the hostname is
 \ttt{localhost}, the URL uses HTTP with the configured port;
-otherwise, it constructs an HTTPS URL, reflection the assumption that
+otherwise, it constructs an HTTPS URL, reflecting the assumption that
 production deployments will use TLS. Bridge account handles default
 to \ttt{mastodon.\{hostname\}} and \ttt{bluesky.\{hostname\}}, and
 their email addresses are generated as
@@ -129,7 +129,7 @@ default and their poll intervals are configurable. The Constellation
 processor defaults to 60 seconds, the DM notification processor to 5
 minutes with a 10-minute batch delay. The database location defaults
 to an in-memory SQLite database, which is useful for testing but must
-be overriden with a file path for production use.
+be overridden with a file path for production use.
 
 An \ttt{allowPrivateAddress} flag, disabled by default, permits
 Fedify to fetch resources from private IP ranges. This is necessary
@@ -165,7 +165,7 @@ converts it into an ActivityPub activity using the converter
 registry, and dispatches it to followers via Fedify. For delete
 operations, it constructs the corresponding \ttt{Delete} or
 \ttt{Undo} activity and dispatches it similarly. The processor also
-add newly created local posts to the \ttt{ap\_monitored\_post} table
+adds newly created local posts to the \ttt{ap\_monitored\_post} table
 for later processing by the Constellation processor. On connection
 loss, the processor waits five seconds before automatically reconnecting.
 
@@ -258,9 +258,9 @@ through numbered migration files, each exporting \ttt{up()} and
     notifications.
 \end{itemize}
 
-\section{Bridge Account System}\label{sec:bridge-account-system}
+\subsection{Bridge Account System}\label{sec:bridge-account-system}
 
-\subsection{Why Two Bridge Accounts?}
+\subsubsection{Why Two Bridge Accounts?}
 
 Fedisky uses two special \enquote{bridge accounts} to facilitate
 bridging between the AT Protocol and ActivityPub. The first is the
@@ -281,7 +281,7 @@ handle is \ttt{bluesky.\{hostname\}} and display name is
 \enquote{Bluesky Bridge}, again configurable by the operator via
 environment variables.
 
-\subsection{Account Lifecycle}
+\subsubsection{Account Lifecycle}
 
 The two bridge accounts are managed by the
 \ttt{MastodonBridgeAccountManager} and
@@ -296,9 +296,9 @@ use in XRPC calls. The Mastodon bridge account is hidden from
 ActivityPub discovery, while the Bluesky bridge account is exposed as
 a regular actor.
 
-\subsection{Attribution Model}
+\subsubsection{Attribution Model}
 
-Since both bridge accounts post content on behalf on users and do not
+Since both bridge accounts post content on behalf of users and do not
 carry any user identity in their handle or display name, we need to
 ensure proper attribution of content to the original authors. For
 incoming Fediverse replies posted by the Mastodon bridge account, we
@@ -374,7 +374,7 @@ to show highlighted links to these other accounts on different
 platforms. Fedisky
 follows this approach and includes the user's ATProto URI in the
 \ttt{alsoKnownAs} field of the actor document, allowing Fediverse
-instance to link the ActivityPub actor back to the original Bluesky
+instances to link the ActivityPub actor back to the original Bluesky
 user and profile.
 
 \subsection{Outbound: ATProto Post to ActivityPub Note}
@@ -394,7 +394,7 @@ sequence diagram in \autoref{fig:outbound}.
 
 Fedisky receives real-time updates from the ATProto firehose, a
 WebSocket stream that delivers commits as
-CBOR\footnote{\url{https://atproto.com/specs/data-model}}-encoded
+CBOR-encoded
 frames. Each frame contains repository operations (create, update,
 or delete) along with metadata such as the repository DID and
 sequence number. The firehose processor decodes the CBOR frame and
@@ -426,13 +426,13 @@ plain text into HTML and ATProto self-labels into ActivityPub content
 warnings if necessary. A detailed explanation of the conversion logic
 can be found in \autoref{sec:conversion-layer}.
 
-After conversion completes, Fedisky store the post mapping in the
+After conversion completes, Fedisky stores the post mapping in the
 database, recording the ATProto URI, author DID, and creation
 timestamp. This mapping enables Fedisky to track which posts have
 been federated and to handle subsequent operations like deletions. If
 the post is a reply to a bridge account post (i.e. a post originally
 created by a Fediverse user and relayed back to Bluesky), Fedisky
-performs and additional step: It looks up the bridge post mapping to
+performs an additional step: It looks up the bridge post mapping to
 retrieve the bridge actor's ID and inbox URL, then sends the
 \ttt{Create} activity directly to that actor's inbox. This ensures
 that the original Fediverse author receives notifications about
@@ -596,7 +596,7 @@ delegate to the appropriate database queries or converter logic.
   \item \ttt{GET /users/\{did\}/outbox} \\
     Paginated collection of posts, likes, and reposts, aggregated
     from the PDS using its \ttt{com.atproto.repo.listRecords} API.
-    This allows Mastodon instance to fetch the user's content and
+    This allows Mastodon instances to fetch the user's content and
     engagements for display on their profile and timelines.
   \item \ttt{GET /users/\{did\}/followers} and \ttt{GET
     /users/\{did\}/following} \\
@@ -693,7 +693,7 @@ prevent Cross-Site Scripting (XSS) vulnerabilities.
 
 The \ttt{toRecord} method receives an ActivityPub note object and
 transforms it into an \ttt{app.bsky.feed.post} record. The HTML
-content is parsed in to plain text using the \ttt{html-to-text} NPM
+content is parsed into plain text using the \ttt{html-to-text} NPM
 package\footnote{\url{https://www.npmjs.com/package/html-to-text}}
 (see \autoref{sec:html-richtext} below), and the resulting text is
 truncated to 3000 bytes if necessary to respect Bluesky's post size
@@ -720,7 +720,7 @@ an \ttt{Announce} activity. Both converters first check whether the
 subject post belongs to a local PDS user using the \ttt{isLocalUser}
 utility, which queries the PDS for the account. If the subject post
 is from an external PDS, the activity is discarded to avoid
-generating engagement notification for posts that are not managed by
+generating engagement notifications for posts that are not managed by
 this Fedisky instance.
 
 \subsection{HTML \texorpdfstring{$\leftrightarrow$}{<->} Rich
@@ -985,6 +985,8 @@ Fedisky and PDS containers, ensuring that Fedisky only starts after
 the PDS's health check passes.
 
 \section{Limitations}\label{sec:limitations}
+
+TODO
 
 % No Update activity support -- only Create and Delete are handled
 % Reply threading: parseReplyTarget uses parent as both root and

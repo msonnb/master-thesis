@@ -19,7 +19,7 @@ An alternative design could have been a centralized bridging service
 that bridges \textit{all} of Bluesky into the Fediverse, which is
 realized by Bridgy Fed (\autoref{sec:related-work-bridgy-fed}).
 Compared to a centralized bridging service, a sidecar container
-running alongside a single Bluesky PDS instance, can share resources
+running alongside a single Bluesky PDS instance can share resources
 with the PDS, most importantly the server's hostname, which allows it
 to operate under the same domain and thus provide a single shared
 identity for users across Bluesky and Mastodon, e.g.
@@ -47,6 +47,6 @@ implementations, making each harder to reason about and test in
 isolation. Furthermore, the sidecar gives more deployment
 flexibility, as operators can choose to start or stop the bridge
 independently of the PDS. Since communication between the sidecar and
-the PDS is done through HTTP APIs, the sidecar can be developed a
+the PDS is done through HTTP APIs, the sidecar can be developed in a
 different technology stack, and is automatically compatible with any
 PDS implementation that adheres to the AT Protocol specifications.
